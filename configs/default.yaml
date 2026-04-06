@@ -1,0 +1,53 @@
+runtime:
+  device: auto
+  source_fps_fallback: 30.0
+
+line:
+  value: "50%,5%,50%,95%"
+  width: 24
+  cooldown_sec: 2.0
+  direction: either
+  read_distance_multiplier: 2.5
+
+models:
+  vehicle_model: yolov8n.pt
+  plate_model: runs/detect/train3/weights/best.pt
+  tracker: botsort.yaml
+  motorcycle_class_id: 3
+  vehicle_conf: 0.35
+  vehicle_iou: 0.5
+  vehicle_imgsz: 1280
+  plate_conf: 0.25
+  plate_has_class: true
+  plate_class_id: 0
+  bike_crop_expand: 1.1
+  plate_box_expand: 0.12
+
+reads:
+  scan_every_n_frames: 1
+  min_digits: 1
+  vote_window_sec: 2.5
+  track_state_ttl_sec: 10.0
+
+reid:
+  enabled: false
+  gallery_path: gallery
+  threshold: 0.6
+
+stream:
+  reconnect_delay_sec: 3.0
+  max_reconnects: -1
+  loop_file: false
+  status_interval_sec: 10.0
+
+output:
+  write_video: true
+  write_csv: true
+  write_jsonl: true
+  write_summary: true
+  overlay_top_n: 10
+  save_plate_crops: false
+
+service:
+  host: 127.0.0.1
+  port: 8080

@@ -1,9 +1,11 @@
-torch==2.3.1+cpu     # or matching CUDA build
-torchvision==0.18.1+cpu
---extra-index-url https://download.pytorch.org/whl/cpu
-ultralytics==8.1.29
-supervision>=0.19.0
-paddleocr>=2.6.0.3
-opencv-python
-numpy
-pandas
+torch>=2.3
+torchvision>=0.18
+ultralytics>=8.3
+opencv-python>=4.10
+numpy>=1.26
+PyYAML>=6.0
+pydantic>=2.8
+Pillow>=10.0
+
+# Optional:
+# torchreid

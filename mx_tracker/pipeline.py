@@ -24,6 +24,7 @@ from .geometry import (
     pick_line_on_frame,
     point_line_side_and_dist,
     to_percent_str,
+    zone_crop,
 )
 from .runtime import REPO_ROOT, prepare_runtime_environment
 
@@ -48,6 +49,7 @@ class PlateRead:
     text: str | None
     confidence: float
     plate_bbox: tuple[int, int, int, int] | None
+    x_center: float = 0.0
 
 
 @dataclass(slots=True)
@@ -216,7 +218,7 @@ def _make_run_dir(output_dir: str | Path | None, prefix: str) -> Path:
         run_dir = Path(output_dir).expanduser().resolve()
     else:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        run_dir = (REPO_ROOT / "artifacts" / f"{prefix}_{timestamp}").resolve()
+        run_dir = (REPO_ROOT / "data" / "artifacts" / f"{prefix}_{timestamp}").resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
 
@@ -249,17 +251,17 @@ def _xyxy_array(result_boxes: object, attr: str) -> np.ndarray:
     return tensor.detach().cpu().numpy()
 
 
-def detect_plate_number(
+def _build_digit_groups(
     plate_model: YOLO | None,
     crop: np.ndarray,
     settings: TrackerSettings,
-) -> PlateRead:
+) -> tuple[list[list[dict]], tuple[int, int, int, int] | None]:
     if plate_model is None or crop.size == 0:
-        return PlateRead(None, 0.0, None)
+        return [], None
     result = plate_model(crop, verbose=False)[0]
     boxes = result.boxes
     if boxes is None or len(boxes) == 0:
-        return PlateRead(None, 0.0, None)
+        return [], None
 
     xyxy = _xyxy_array(boxes, "xyxy")
     classes = _xyxy_array(boxes, "cls").astype(int)
@@ -315,7 +317,7 @@ def detect_plate_number(
             digit_candidates = filtered_digits
 
     if not digit_candidates:
-        return PlateRead(None, 0.0, plate_bbox)
+        return [], plate_bbox
 
     digit_candidates.sort(key=lambda item: item["x_center"])
     deduped: list[dict[str, float | str]] = []
@@ -331,11 +333,67 @@ def detect_plate_number(
             continue
         deduped.append(candidate)
 
-    number = "".join(str(item["digit"]) for item in deduped)
-    if len(number) < settings.reads.min_digits:
+    # Split into groups when gap between digits exceeds one digit width —
+    # prevents merging digits from two bikes in the same crop.
+    groups: list[list[dict]] = []
+    for candidate in deduped:
+        if not groups:
+            groups.append([candidate])
+            continue
+        prev = groups[-1][-1]
+        gap = float(candidate["x1"]) - float(prev["x2"])
+        avg_width = (float(prev["width"]) + float(candidate["width"])) / 2.0
+        if gap > avg_width:
+            groups.append([candidate])
+        else:
+            groups[-1].append(candidate)
+
+    return groups, plate_bbox
+
+
+def _group_score(g: list[dict]) -> tuple[int, float]:
+    avg_conf = sum(float(d["conf"]) for d in g) / len(g)
+    return (len(g), avg_conf)
+
+
+def _group_to_plate_read(
+    group: list[dict],
+    plate_bbox: tuple[int, int, int, int] | None,
+    min_digits: int,
+) -> PlateRead | None:
+    number = "".join(str(item["digit"]) for item in group)
+    if len(number) < min_digits:
+        return None
+    confidence = sum(float(item["conf"]) for item in group) / len(group)
+    x_center = sum(float(d["x_center"]) for d in group) / len(group)
+    return PlateRead(number, confidence, plate_bbox, x_center=x_center)
+
+
+def detect_plate_number(
+    plate_model: YOLO | None,
+    crop: np.ndarray,
+    settings: TrackerSettings,
+) -> PlateRead:
+    groups, plate_bbox = _build_digit_groups(plate_model, crop, settings)
+    if not groups:
         return PlateRead(None, 0.0, plate_bbox)
-    confidence = sum(float(item["conf"]) for item in deduped) / len(deduped)
-    return PlateRead(number, confidence, plate_bbox)
+    best_group = max(groups, key=_group_score)
+    plate_read = _group_to_plate_read(best_group, plate_bbox, settings.reads.min_digits)
+    return plate_read if plate_read is not None else PlateRead(None, 0.0, plate_bbox)
+
+
+def detect_all_plate_numbers(
+    plate_model: YOLO | None,
+    crop: np.ndarray,
+    settings: TrackerSettings,
+) -> list[PlateRead]:
+    groups, plate_bbox = _build_digit_groups(plate_model, crop, settings)
+    result = []
+    for group in groups:
+        plate_read = _group_to_plate_read(group, plate_bbox, settings.reads.min_digits)
+        if plate_read is not None:
+            result.append(plate_read)
+    return result
 
 
 def _draw_label(frame: np.ndarray, bbox: tuple[int, int, int, int], text: str) -> None:
@@ -363,15 +421,48 @@ def _save_plate_crop(
     frame_index: int,
     tracker_id: int,
     crop: np.ndarray,
-    plate_bbox: tuple[int, int, int, int] | None,
-) -> None:
+    plate_text: str | None = None,
+    track_state: "TrackState | None" = None,
+    plate_read: "PlateRead | None" = None,
+) -> Path | None:
     if artifacts.debug_dir is None or crop.size == 0:
-        return
+        return None
     debug_image = crop.copy()
-    if plate_bbox is not None:
-        cv2.rectangle(debug_image, plate_bbox[:2], plate_bbox[2:], (0, 255, 0), 2)
-    output_path = artifacts.debug_dir / f"frame{frame_index}_tid{tracker_id}.jpg"
+    if plate_text:
+        dest = artifacts.debug_dir / "resolved" / f"plate_{plate_text}"
+    else:
+        dest = artifacts.debug_dir / "unresolved"
+    dest.mkdir(parents=True, exist_ok=True)
+    stem = f"frame{frame_index}_tid{tracker_id}"
+    output_path = dest / f"{stem}.jpg"
     cv2.imwrite(str(output_path), debug_image)
+
+    meta: dict[str, object] = {
+        "frame_index": frame_index,
+        "tracker_id": tracker_id,
+        "plate_text": plate_text,
+    }
+    if plate_read is not None:
+        meta["last_read"] = {
+            "text": plate_read.text,
+            "confidence": round(plate_read.confidence, 3) if plate_read.confidence else None,
+        }
+    if track_state is not None:
+        meta["observations"] = [
+            {
+                "text": obs.text,
+                "confidence": round(obs.confidence, 3),
+                "frame_index": obs.frame_index,
+            }
+            for obs in track_state.observations
+        ]
+    if not plate_text:
+        meta["manual_plate"] = ""
+        meta["save"] = 0
+    (dest / f"{stem}.json").write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2)
+    )
+    return output_path
 
 
 def _flatten_event(event: dict[str, object]) -> dict[str, object]:
@@ -428,13 +519,12 @@ def _initialise_models(
     vehicle_model = YOLO(str(vehicle_model_path))
     vehicle_model.to(device)
     plate_model = None
-    if collect_only:
-        plate_model = None
-    elif plate_model_path is not None and plate_model_path.exists():
-        plate_model = YOLO(str(plate_model_path))
-        plate_model.to(device)
-    elif not collect_only:
-        raise FileNotFoundError(f"Plate model not found: {settings.models.plate_model}")
+    if not collect_only:
+        if plate_model_path is not None and plate_model_path.exists():
+            plate_model = YOLO(str(plate_model_path))
+            plate_model.to(device)
+        else:
+            raise FileNotFoundError(f"Plate model not found: {settings.models.plate_model}")
     logger(f"device={device}")
     logger(f"vehicle_model={vehicle_model_path}")
     if plate_model_path is not None:
@@ -476,10 +566,9 @@ def iter_source(
     is_local_file = _is_local_file_source(source)
     frame_index = 0
     reconnects = 0
-    source_meta = probe_source(source, settings)
-    fps = float(source_meta["fps"])
-    width = int(source_meta["width"])
-    height = int(source_meta["height"])
+    fps = float(source_stats["fps"])
+    width = int(source_stats["width"])
+    height = int(source_stats["height"])
     stream_started_at = time.perf_counter()
 
     while not stop_event.is_set():
@@ -596,6 +685,7 @@ def process_source(
             "bbox_y2",
             "center_x",
             "center_y",
+            "crop_file",
         ]
     csv_writer = CsvWriter(artifacts.csv_path, csv_fields)
     jsonl_writer = JsonlWriter(artifacts.jsonl_path)
@@ -615,8 +705,7 @@ def process_source(
         )
 
     track_states: dict[int, TrackState] = {}
-    lap_counts: dict[str, int] = {}
-    last_lap_ts: dict[str, float] = {}
+    crossing_counts: dict[str, int] = {}
     unresolved_crossings = 0
     saved_crops = 0
     events = 0
@@ -668,7 +757,7 @@ def process_source(
                     and distance_to_line <= (settings.line.width * settings.line.read_distance_multiplier)
                 )
                 bike_crop = None
-                if should_scan or collect_only:
+                if should_scan:
                     bx1, by1, bx2, by2 = expand_bbox(
                         x1,
                         y1,
@@ -676,11 +765,17 @@ def process_source(
                         y2,
                         packet.width,
                         packet.height,
-                        settings.models.bike_crop_expand,
+                        1.0 + settings.models.bike_crop_expand,
                     )
                     bike_crop = packet.frame[by1:by2, bx1:bx2]
                     if not collect_only:
-                        read = detect_plate_number(plate_model, bike_crop, settings)
+                        plate_input = zone_crop(
+                            bike_crop,
+                            settings.models.plate_zone_n,
+                            settings.models.plate_zone_select,
+                        )
+                        if min(plate_input.shape[:2]) >= settings.models.min_bike_crop_px:
+                            read = detect_plate_number(plate_model, plate_input, settings)
                         if read.text is not None:
                             track_state.add_observation(
                                 PlateObservation(
@@ -724,7 +819,7 @@ def process_source(
                     y2,
                     packet.width,
                     packet.height,
-                    settings.models.bike_crop_expand,
+                    1.0 + settings.models.bike_crop_expand,
                 )
                 bike_crop = packet.frame[by1:by2, bx1:bx2]
 
@@ -753,46 +848,97 @@ def process_source(
                     saved_crops += 1
                     continue
 
-                chosen_plate = track_state.best_plate(packet.timestamp, settings.reads.vote_window_sec)
-                rider_id = None
-                identity_source = "unresolved"
-                plate_text = ""
-                plate_conf = 0.0
-                if chosen_plate is not None:
-                    plate_text = chosen_plate.text
-                    plate_conf = chosen_plate.confidence
-                    rider_id = f"plate_{plate_text}"
-                    identity_source = "plate"
-                    _save_plate_crop(artifacts, packet.frame_index, int(tracker_id), bike_crop, read.plate_bbox)
-                elif reid is not None:
-                    rider_id = reid.identify(bike_crop)
-                    if rider_id is not None:
-                        identity_source = "reid"
+                plate_debug = zone_crop(
+                    bike_crop,
+                    settings.models.plate_zone_n,
+                    settings.models.plate_zone_select,
+                )
 
-                if rider_id is None:
-                    unresolved_crossings += 1
-                    continue
+                plate_groups = detect_all_plate_numbers(plate_model, plate_debug, settings)
+                if not plate_groups:
+                    chosen = track_state.best_plate(packet.timestamp, settings.reads.vote_window_sec)
+                    if chosen is not None:
+                        plate_groups = [PlateRead(chosen.text, chosen.confidence, None)]
 
-                lap_counts[rider_id] = lap_counts.get(rider_id, 0) + 1
-                previous_ts = last_lap_ts.get(rider_id)
-                lap_time = packet.timestamp if previous_ts is None else packet.timestamp - previous_ts
-                last_lap_ts[rider_id] = packet.timestamp
-                event = {
-                    "timestamp": round(packet.timestamp, 3),
-                    "frame_index": packet.frame_index,
-                    "tracker_id": int(tracker_id),
-                    "rider_id": rider_id,
-                    "identity_source": identity_source,
-                    "plate_text": plate_text,
-                    "plate_conf": round(plate_conf, 3),
-                    "lap": lap_counts[rider_id],
-                    "lap_time": round(lap_time, 3),
-                    "bbox": [x1, y1, x2, y2],
-                    "center": [center[0], center[1]],
-                }
-                jsonl_writer.write(event)
-                csv_writer.write(_flatten_event(dict(event)))
-                events += 1
+                if len(plate_groups) > 1:
+                    reverse = settings.line.direction == "left_to_right"
+                    plate_groups.sort(key=lambda pr: pr.x_center, reverse=reverse)
+
+                saved_path = _save_plate_crop(
+                    artifacts,
+                    packet.frame_index,
+                    int(tracker_id),
+                    plate_debug,
+                    plate_text=plate_groups[0].text if plate_groups else None,
+                    track_state=track_state,
+                    plate_read=read,
+                )
+                if saved_path is not None:
+                    saved_crops += 1
+
+                crop_file = str(saved_path) if saved_path else ""
+
+                if not plate_groups:
+                    reid_id = reid.identify(bike_crop) if reid is not None else None
+                    if reid_id is None:
+                        unresolved_crossings += 1
+                        unresolved_event: dict[str, object] = {
+                            "timestamp": round(packet.timestamp, 3),
+                            "frame_index": packet.frame_index,
+                            "tracker_id": int(tracker_id),
+                            "rider_id": "",
+                            "identity_source": "unresolved",
+                            "plate_text": "",
+                            "plate_conf": 0.0,
+                            "lap": "",
+                            "lap_time": "",
+                            "bbox": [x1, y1, x2, y2],
+                            "center": [center[0], center[1]],
+                            "crop_file": crop_file,
+                        }
+                        jsonl_writer.write(unresolved_event)
+                        csv_writer.write(_flatten_event(dict(unresolved_event)))
+                    else:
+                        crossing_counts[reid_id] = crossing_counts.get(reid_id, 0) + 1
+                        reid_event: dict[str, object] = {
+                            "timestamp": round(packet.timestamp, 3),
+                            "frame_index": packet.frame_index,
+                            "tracker_id": int(tracker_id),
+                            "rider_id": reid_id,
+                            "identity_source": "reid",
+                            "plate_text": "",
+                            "plate_conf": 0.0,
+                            "lap": "",
+                            "lap_time": "",
+                            "bbox": [x1, y1, x2, y2],
+                            "center": [center[0], center[1]],
+                            "crop_file": crop_file,
+                        }
+                        jsonl_writer.write(reid_event)
+                        csv_writer.write(_flatten_event(dict(reid_event)))
+                        events += 1
+                else:
+                    for group_idx, plate_read in enumerate(plate_groups):
+                        ts = packet.timestamp + group_idx * 0.1
+                        rider_id = f"plate_{plate_read.text}"
+                        crossing_counts[rider_id] = crossing_counts.get(rider_id, 0) + 1
+                        event: dict[str, object] = {
+                            "timestamp": round(ts, 3),
+                            "frame_index": packet.frame_index,
+                            "tracker_id": int(tracker_id),
+                            "rider_id": rider_id,
+                            "identity_source": "plate",
+                            "plate_text": plate_read.text,
+                            "plate_conf": round(plate_read.confidence, 3),
+                            "lap": "",
+                            "lap_time": "",
+                            "bbox": [x1, y1, x2, y2],
+                            "center": [center[0], center[1]],
+                            "crop_file": crop_file,
+                        }
+                        jsonl_writer.write(event)
+                        csv_writer.write(_flatten_event(dict(event)))
+                        events += 1
 
         cv2.line(frame, line_a, line_b, (255, 255, 255), settings.line.width)
         for record in frame_records:
@@ -801,11 +947,11 @@ def process_source(
                 label += f" plate={record.plate_text}:{record.plate_conf:.2f}"
             _draw_label(frame, record.bbox, label)
         if not collect_only:
-            top_rows = sorted(lap_counts.items(), key=lambda item: (-item[1], item[0]))[: settings.output.overlay_top_n]
-            for index, (rider_id, lap_count) in enumerate(top_rows):
+            top_rows = sorted(crossing_counts.items(), key=lambda item: (-item[1], item[0]))[: settings.output.overlay_top_n]
+            for index, (rider_id, count) in enumerate(top_rows):
                 cv2.putText(
                     frame,
-                    f"{rider_id} lap {lap_count}",
+                    f"{rider_id} x{count}",
                     (10, 28 + index * 24),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.7,
@@ -839,7 +985,7 @@ def process_source(
             "events": events,
             "saved_crops": saved_crops,
             "unresolved_crossings": unresolved_crossings,
-            "lap_counts": lap_counts,
+            "crossing_counts": crossing_counts,
             "source_stats": source_stats,
         }
         artifacts.summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))
@@ -855,7 +1001,7 @@ def process_source(
         "events": events,
         "saved_crops": saved_crops,
         "unresolved_crossings": unresolved_crossings,
-        "lap_counts": lap_counts,
+        "crossing_counts": crossing_counts,
         "source_stats": source_stats,
     }
 

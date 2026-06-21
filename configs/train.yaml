@@ -1,0 +1,9 @@
+data_yaml: data/datasets/plates/data.yaml
+model_path: data/models/yolov8n.pt
+project_dir: data/runs/detect
+run_name: mx_plate_train
+epochs: 100
+imgsz: 640
+batch: 16
+device: auto
+workers: 8

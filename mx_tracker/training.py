@@ -167,8 +167,8 @@ def validate_dataset(dataset_dir: str | Path) -> DatasetValidationReport:
     dataset_path = Path(dataset_dir).expanduser().resolve()
     if not dataset_path.is_dir():
         raise FileNotFoundError(f"Dataset directory not found: {dataset_path}")
-    train_images = {path.stem for path in (dataset_path / "train" / "images").glob("*") if path.is_file()}
-    val_images = {path.stem for path in (dataset_path / "val" / "images").glob("*") if path.is_file()}
+    train_images = {path.stem for path in (dataset_path / "train" / "images").glob("*") if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES}
+    val_images = {path.stem for path in (dataset_path / "val" / "images").glob("*") if path.is_file() and path.suffix.lower() in IMAGE_SUFFIXES}
     train_labels = {path.stem for path in (dataset_path / "train" / "labels").glob("*.txt")}
     val_labels = {path.stem for path in (dataset_path / "val" / "labels").glob("*.txt")}
     return DatasetValidationReport(

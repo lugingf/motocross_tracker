@@ -19,12 +19,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "value": "50%,5%,50%,95%",
         "width": 24,
         "cooldown_sec": 2.0,
-        "direction": "either",
+        "direction": "left_to_right",
         "read_distance_multiplier": 2.5,
     },
     "models": {
-        "vehicle_model": "yolov8n.pt",
-        "plate_model": "runs/detect/train3/weights/best.pt",
+        "vehicle_model": "data/models/yolov8n.pt",
+        "plate_model": "data/runs/detect/train3/weights/best.pt",
         "tracker": "botsort.yaml",
         "motorcycle_class_id": 3,
         "vehicle_conf": 0.35,
@@ -33,8 +33,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "plate_conf": 0.25,
         "plate_has_class": True,
         "plate_class_id": 0,
-        "bike_crop_expand": 1.10,
+        "bike_crop_expand": 0.10,
         "plate_box_expand": 0.12,
+        "min_bike_crop_px": 96,
+        "plate_zone_n": 1,
+        "plate_zone_select": [1],
     },
     "reads": {
         "scan_every_n_frames": 1,
@@ -44,7 +47,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "reid": {
         "enabled": False,
-        "gallery_path": "gallery",
+        "gallery_path": "data/gallery",
         "threshold": 0.60,
     },
     "stream": {
@@ -101,15 +104,15 @@ class LineSettings(BaseModel):
     @field_validator("direction")
     @classmethod
     def validate_direction(cls, value: str) -> str:
-        allowed = {"either", "positive", "negative"}
+        allowed = {"left_to_right", "right_to_left"}
         if value not in allowed:
             raise ValueError(f"line.direction must be one of {sorted(allowed)}")
         return value
 
 
 class ModelSettings(BaseModel):
-    vehicle_model: str = "yolov8n.pt"
-    plate_model: str = "runs/detect/train3/weights/best.pt"
+    vehicle_model: str = "data/models/yolov8n.pt"
+    plate_model: str = "data/runs/detect/train3/weights/best.pt"
     tracker: str = "botsort.yaml"
     motorcycle_class_id: int = 3
     vehicle_conf: float = 0.35
@@ -118,8 +121,19 @@ class ModelSettings(BaseModel):
     plate_conf: float = 0.25
     plate_has_class: bool = True
     plate_class_id: int = 0
-    bike_crop_expand: float = 1.10
+    bike_crop_expand: float = 0.10
     plate_box_expand: float = 0.12
+    min_bike_crop_px: int = 96
+    plate_zone_n: int = 1
+    plate_zone_select: list[int] = Field(default_factory=lambda: [1])
+
+    @field_validator("plate_zone_n")
+    @classmethod
+    def validate_plate_zone_n(cls, v: int) -> int:
+        allowed = {1, 2, 4, 9, 32}
+        if v not in allowed:
+            raise ValueError(f"plate_zone_n must be one of {sorted(allowed)}")
+        return v
 
 
 class ReadSettings(BaseModel):
@@ -131,7 +145,7 @@ class ReadSettings(BaseModel):
 
 class ReIdSettings(BaseModel):
     enabled: bool = False
-    gallery_path: str = "gallery"
+    gallery_path: str = "data/gallery"
     threshold: float = 0.60
 
 

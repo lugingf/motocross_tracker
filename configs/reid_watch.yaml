@@ -1,0 +1,13 @@
+run_dir: data/artifacts/StartTO_17Jan_crops
+
+# Plate re-detection (tried before ReID visual matching)
+plate_model: data/models/yolov8n_plates_ft1.pt
+plate_conf_low: 0.15
+
+# ReID
+threshold: 0.60
+device: cpu
+poll_interval: 4.0
+
+# Uncomment to stop automatically after N idle seconds:
+# idle_timeout: 60

@@ -5,17 +5,32 @@ import json
 from pathlib import Path
 
 import cv2
+import yaml
 
 from .config import load_settings, write_default_config
 from .geometry import pick_line_on_frame, to_percent_str
 from .gopro import build_concat_list, prepare_gopro_video
 from .pipeline import collect_samples, run_file_detection, run_stream_detection
+from .recount import recount
+from .reid_watch import run_reid_watch
 from .service import run_service
 from .training import build_dataset, train_model, validate_dataset
 
 
 def _print_json(payload: dict[str, object]) -> None:
     print(json.dumps(payload, indent=2, ensure_ascii=False))
+
+
+def _load_script_config(config_path: str | None, *, required: bool = False) -> dict:
+    """Load a per-script YAML config file, returning {} when not provided or not found."""
+    if not config_path:
+        return {}
+    path = Path(config_path)
+    if not path.exists():
+        if required:
+            raise FileNotFoundError(f"Config file not found: {config_path}")
+        return {}
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
 def _load_and_override_settings(args: argparse.Namespace):
@@ -137,28 +152,38 @@ def _handle_dataset_validate(args: argparse.Namespace) -> int:
 
 
 def _handle_train(args: argparse.Namespace) -> int:
+    cfg = _load_script_config(getattr(args, "config", None))
+    data_yaml = args.data_yaml or cfg.get("data_yaml")
+    if not data_yaml:
+        raise SystemExit("error: --data-yaml is required (or set 'data_yaml:' in config YAML)")
     result = train_model(
-        data_yaml=args.data_yaml,
-        model_path=args.model_path,
-        project_dir=args.project_dir,
-        run_name=args.run_name,
-        epochs=args.epochs,
-        imgsz=args.imgsz,
-        batch=args.batch,
-        device=args.device,
-        workers=args.workers,
+        data_yaml=data_yaml,
+        model_path=args.model_path or cfg.get("model_path", "data/models/yolov8n.pt"),
+        project_dir=args.project_dir or cfg.get("project_dir", "data/runs/detect"),
+        run_name=args.run_name or cfg.get("run_name", "mx_plate_train"),
+        epochs=args.epochs if args.epochs is not None else cfg.get("epochs", 100),
+        imgsz=args.imgsz if args.imgsz is not None else cfg.get("imgsz", 640),
+        batch=args.batch if args.batch is not None else cfg.get("batch", 16),
+        device=args.device or cfg.get("device", "auto"),
+        workers=args.workers if args.workers is not None else cfg.get("workers", 8),
     )
     _print_json(result)
     return 0
 
 
 def _handle_detect_file(args: argparse.Namespace) -> int:
+    cfg = _load_script_config(getattr(args, "config", None))
+    source = args.source or cfg.get("source")
+    if not source:
+        raise SystemExit("error: --source is required (or set 'source:' in config YAML)")
+    args.source = source
+    out_dir = args.out_dir or cfg.get("out_dir")
     settings, base_dir = _load_and_override_settings(args)
     result = run_file_detection(
-        source=args.source,
+        source=source,
         settings=settings,
         base_dir=base_dir,
-        output_dir=args.out_dir,
+        output_dir=out_dir,
         limit_frames=args.limit_frames,
         calibrate_line=args.calibrate_line,
     )
@@ -167,16 +192,48 @@ def _handle_detect_file(args: argparse.Namespace) -> int:
 
 
 def _handle_detect_stream(args: argparse.Namespace) -> int:
+    cfg = _load_script_config(getattr(args, "config", None))
+    source = args.source or cfg.get("source")
+    if not source:
+        raise SystemExit("error: --source is required (or set 'source:' in config YAML)")
+    args.source = source
+    out_dir = args.out_dir or cfg.get("out_dir")
     settings, base_dir = _load_and_override_settings(args)
     result = run_stream_detection(
-        source=args.source,
+        source=source,
         settings=settings,
         base_dir=base_dir,
-        output_dir=args.out_dir,
+        output_dir=out_dir,
         limit_frames=args.limit_frames,
         calibrate_line=args.calibrate_line,
     )
     _print_json(result)
+    return 0
+
+
+def _handle_reid_watch(args: argparse.Namespace) -> int:
+    cfg = _load_script_config(getattr(args, "config", None))
+    run_dir = args.run_dir or cfg.get("run_dir")
+    if not run_dir:
+        raise SystemExit("error: --run-dir is required (or set 'run_dir:' in config YAML)")
+    run_reid_watch(
+        run_dir=run_dir,
+        device=args.device or cfg.get("device") or "cpu",
+        threshold=args.threshold if args.threshold is not None else cfg.get("threshold", 0.60),
+        poll_interval=args.poll_interval if args.poll_interval is not None else cfg.get("poll_interval", 2.0),
+        plate_model_path=args.plate_model or cfg.get("plate_model"),
+        plate_conf_low=args.plate_conf_low if args.plate_conf_low is not None else cfg.get("plate_conf_low", 0.15),
+        stop_after_idle_sec=args.idle_timeout if args.idle_timeout is not None else cfg.get("idle_timeout"),
+    )
+    return 0
+
+
+def _handle_recount(args: argparse.Namespace) -> int:
+    cfg = _load_script_config(getattr(args, "config", None))
+    run_dir = args.run_dir or cfg.get("run_dir")
+    if not run_dir:
+        raise SystemExit("error: --run-dir is required (or set 'run_dir:' in config YAML)")
+    recount(run_dir=run_dir)
     return 0
 
 
@@ -189,8 +246,8 @@ def _handle_serve(args: argparse.Namespace) -> int:
 
 
 def _add_detection_options(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--config", help="Path to YAML config")
-    parser.add_argument("--source", required=True, help="Video file, stream URL or camera index")
+    parser.add_argument("--config", help="Path to YAML config (model settings + optional source/out_dir)")
+    parser.add_argument("--source", help="Video file, stream URL or camera index (overrides config)")
     parser.add_argument("--out-dir", help="Directory for output artifacts")
     parser.add_argument("--limit-frames", type=int, help="Stop after N frames")
     parser.add_argument("--calibrate-line", action="store_true", help="Pick the finish line on the first frame")
@@ -270,15 +327,16 @@ def build_parser() -> argparse.ArgumentParser:
     dataset_validate.set_defaults(func=_handle_dataset_validate)
 
     train_parser = subparsers.add_parser("train", help="Train a YOLO plate+digits model")
-    train_parser.add_argument("--data-yaml", required=True, help="Path to dataset data.yaml")
-    train_parser.add_argument("--model-path", default="yolov8n.pt", help="Base model checkpoint")
-    train_parser.add_argument("--project-dir", default="runs/detect", help="Output project directory")
-    train_parser.add_argument("--run-name", default="mx_plate_train", help="Training run name")
-    train_parser.add_argument("--epochs", type=int, default=100, help="Training epochs")
-    train_parser.add_argument("--imgsz", type=int, default=640, help="Training image size")
-    train_parser.add_argument("--batch", type=int, default=16, help="Batch size")
-    train_parser.add_argument("--device", default="auto", help="Training device")
-    train_parser.add_argument("--workers", type=int, default=8, help="Data loader workers")
+    train_parser.add_argument("--config", default="configs/train.yaml", help="Path to train YAML config (sets all defaults)")
+    train_parser.add_argument("--data-yaml", help="Path to dataset data.yaml (overrides config)")
+    train_parser.add_argument("--model-path", help="Base model checkpoint (overrides config)")
+    train_parser.add_argument("--project-dir", help="Output project directory (overrides config)")
+    train_parser.add_argument("--run-name", help="Training run name (overrides config)")
+    train_parser.add_argument("--epochs", type=int, default=None, help="Training epochs (default: 100)")
+    train_parser.add_argument("--imgsz", type=int, default=None, help="Training image size (default: 640)")
+    train_parser.add_argument("--batch", type=int, default=None, help="Batch size (default: 16)")
+    train_parser.add_argument("--device", help="Training device (default: auto)")
+    train_parser.add_argument("--workers", type=int, default=None, help="Data loader workers (default: 8)")
     train_parser.set_defaults(func=_handle_train)
 
     detect_parser = subparsers.add_parser("detect", help="Detection modes")
@@ -294,6 +352,28 @@ def build_parser() -> argparse.ArgumentParser:
     detect_stream.add_argument("--reconnect-delay", type=float, help="Reconnect delay for stream mode")
     detect_stream.add_argument("--max-reconnects", type=int, help="Maximum reconnects for stream mode (-1 for unlimited)")
     detect_stream.set_defaults(func=_handle_detect_stream)
+
+    reid_watch_parser = subparsers.add_parser(
+        "reid-watch",
+        help="Watch an active run directory and match unresolved crossings via ReID",
+    )
+    reid_watch_parser.add_argument("--config", default="configs/reid_watch.yaml", help="Path to reid_watch YAML config (sets all defaults)")
+    reid_watch_parser.add_argument("--run-dir", help="Run directory produced by detect (overrides config)")
+    reid_watch_parser.add_argument("--device", help="Device for plate model and ReID (cpu/cuda:0/mps)")
+    reid_watch_parser.add_argument("--threshold", type=float, default=None, help="ReID similarity threshold (0–1, default: 0.60)")
+    reid_watch_parser.add_argument("--poll-interval", type=float, default=None, help="Seconds between polls (default: 2.0)")
+    reid_watch_parser.add_argument("--plate-model", help="Plate model path for re-detection (tried before ReID)")
+    reid_watch_parser.add_argument("--plate-conf-low", type=float, default=None, help="Lower confidence threshold for plate re-detection (default: 0.15)")
+    reid_watch_parser.add_argument("--idle-timeout", type=float, default=None, help="Stop after N idle seconds (default: run until Ctrl-C)")
+    reid_watch_parser.set_defaults(func=_handle_reid_watch)
+
+    recount_parser = subparsers.add_parser(
+        "recount",
+        help="Recount laps from events.jsonl and write results.csv",
+    )
+    recount_parser.add_argument("--config", default="configs/recount.yaml", help="Path to recount YAML config")
+    recount_parser.add_argument("--run-dir", help="Run directory produced by detect (overrides config)")
+    recount_parser.set_defaults(func=_handle_recount)
 
     serve_parser = subparsers.add_parser("serve", help="Run the HTTP job service")
     serve_parser.add_argument("--config", help="Default YAML config used by service jobs")

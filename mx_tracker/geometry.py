@@ -6,6 +6,51 @@ import cv2
 import numpy as np
 
 
+# rows × cols for each supported zone count; zones numbered left-to-right, top-to-bottom
+_ZONE_GRID: dict[int, tuple[int, int]] = {
+    1: (1, 1),
+    2: (2, 1),   # top / bottom
+    4: (2, 2),
+    9: (3, 3),
+    32: (4, 8),
+}
+
+
+def zone_crop(image: np.ndarray, n_zones: int, selected: list[int]) -> np.ndarray:
+    """Return the sub-image covering the union of the selected zones.
+
+    Zones are numbered 1-based, left-to-right then top-to-bottom.
+    Falls back to the full image when n_zones=1 or selected is empty.
+    """
+    if n_zones <= 1 or not selected or n_zones not in _ZONE_GRID:
+        return image
+    rows, cols = _ZONE_GRID[n_zones]
+    h, w = image.shape[:2]
+    zone_h = h / rows
+    zone_w = w / cols
+
+    min_r = min_c = 10**9
+    max_r = max_c = 0
+    for z in selected:
+        z0 = z - 1
+        r, c = z0 // cols, z0 % cols
+        if r < min_r:
+            min_r = r
+        if r > max_r:
+            max_r = r
+        if c < min_c:
+            min_c = c
+        if c > max_c:
+            max_c = c
+
+    y1 = int(min_r * zone_h)
+    y2 = min(h, int((max_r + 1) * zone_h))
+    x1 = int(min_c * zone_w)
+    x2 = min(w, int((max_c + 1) * zone_w))
+    cropped = image[y1:y2, x1:x2]
+    return cropped if cropped.size > 0 else image
+
+
 def expand_bbox(
     x1: int,
     y1: int,
@@ -141,13 +186,13 @@ def detect_crossing(
         crossed = True
     direction = None
     if crossed:
-        if side_cur > side_prev:
-            direction = "positive"
-        elif side_cur < side_prev:
-            direction = "negative"
+        if side_cur < side_prev:
+            direction = "left_to_right"
+        elif side_cur > side_prev:
+            direction = "right_to_left"
         else:
-            direction = "either"
-        if direction_mode != "either" and direction not in {direction_mode, "either"}:
+            direction = "left_to_right"
+        if direction != direction_mode:
             crossed = False
     return CrossingDecision(crossed, direction, min(dist_prev, dist_cur))
 

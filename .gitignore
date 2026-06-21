@@ -1,0 +1,30 @@
+# macOS metadata
+.DS_Store
+
+# Python
+__pycache__/
+
+# All data, models, datasets, training runs, artifacts
+data/
+
+# Virtual environment
+myenv/
+venv/
+.venv/
+
+# pytest
+.pytest_cache/
+.coverage
+
+# Stray media or output files in root
+*.mp4
+*.mov
+*.csv
+*.txt
+!requirements.txt
+
+# Local config overrides
+configs/local.yaml
+
+# matplotlib cache
+.cache/

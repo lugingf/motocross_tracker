@@ -142,8 +142,8 @@ class JobManager:
             elif action == "train":
                 result = train_model(
                     data_yaml=job.payload["data_yaml"],
-                    model_path=job.payload.get("model_path", "yolov8n.pt"),
-                    project_dir=job.payload.get("project_dir", "runs/detect"),
+                    model_path=job.payload.get("model_path", "data/models/yolov8n.pt"),
+                    project_dir=job.payload.get("project_dir", "data/runs/detect"),
                     run_name=job.payload.get("run_name", "train"),
                     epochs=int(job.payload.get("epochs", 100)),
                     imgsz=int(job.payload.get("imgsz", 640)),
@@ -153,7 +153,8 @@ class JobManager:
                 )
             else:
                 raise ValueError(f"Unsupported action: {action}")
-            job.status = "stopped" if job.stop_event.is_set() and action == "detect_stream" else "completed"
+            stoppable = {"detect_stream", "collect"}
+            job.status = "stopped" if job.stop_event.is_set() and action in stoppable else "completed"
             job.result = result
         except Exception as exc:
             job.status = "failed"

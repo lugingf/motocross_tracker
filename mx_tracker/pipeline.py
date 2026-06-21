@@ -6,6 +6,7 @@ import json
 import time
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timedelta, timezone
 from itertools import chain
 from pathlib import Path
 from threading import Event
@@ -145,7 +146,7 @@ class CsvWriter:
     def __init__(self, path: Path | None, fieldnames: list[str]) -> None:
         self.path = path
         self.handle = None if path is None else path.open("w", newline="", encoding="utf-8")
-        self.writer = None if self.handle is None else csv.DictWriter(self.handle, fieldnames=fieldnames)
+        self.writer = None if self.handle is None else csv.DictWriter(self.handle, fieldnames=fieldnames, extrasaction="ignore")
         if self.writer is not None:
             self.writer.writeheader()
             self.handle.flush()
@@ -655,6 +656,12 @@ def process_source(
         save_plate_crops=settings.output.save_plate_crops and not collect_only,
     )
 
+    wall_started_at = datetime.now(timezone.utc)
+    (artifacts.run_dir / "run_info.json").write_text(
+        json.dumps({"started_at": wall_started_at.isoformat(timespec="seconds"), "source": source}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
     if collect_only:
         csv_fields = [
             "timestamp",
@@ -671,6 +678,7 @@ def process_source(
     else:
         csv_fields = [
             "timestamp",
+            "wall_time",
             "frame_index",
             "tracker_id",
             "rider_id",
@@ -679,10 +687,6 @@ def process_source(
             "plate_conf",
             "lap",
             "lap_time",
-            "bbox_x1",
-            "bbox_y1",
-            "bbox_x2",
-            "bbox_y2",
             "center_x",
             "center_y",
             "crop_file",
@@ -864,26 +868,25 @@ def process_source(
                     reverse = settings.line.direction == "left_to_right"
                     plate_groups.sort(key=lambda pr: pr.x_center, reverse=reverse)
 
-                saved_path = _save_plate_crop(
-                    artifacts,
-                    packet.frame_index,
-                    int(tracker_id),
-                    plate_debug,
-                    plate_text=plate_groups[0].text if plate_groups else None,
-                    track_state=track_state,
-                    plate_read=read,
-                )
-                if saved_path is not None:
-                    saved_crops += 1
-
-                crop_file = str(saved_path) if saved_path else ""
-
                 if not plate_groups:
+                    saved_path = _save_plate_crop(
+                        artifacts,
+                        packet.frame_index,
+                        int(tracker_id),
+                        plate_debug,
+                        plate_text=None,
+                        track_state=track_state,
+                        plate_read=read,
+                    )
+                    if saved_path is not None:
+                        saved_crops += 1
+                    crop_file = str(saved_path) if saved_path else ""
                     reid_id = reid.identify(bike_crop) if reid is not None else None
                     if reid_id is None:
                         unresolved_crossings += 1
                         unresolved_event: dict[str, object] = {
                             "timestamp": round(packet.timestamp, 3),
+                            "wall_time": (wall_started_at + timedelta(seconds=packet.timestamp)).isoformat(timespec="seconds"),
                             "frame_index": packet.frame_index,
                             "tracker_id": int(tracker_id),
                             "rider_id": "",
@@ -902,6 +905,7 @@ def process_source(
                         crossing_counts[reid_id] = crossing_counts.get(reid_id, 0) + 1
                         reid_event: dict[str, object] = {
                             "timestamp": round(packet.timestamp, 3),
+                            "wall_time": (wall_started_at + timedelta(seconds=packet.timestamp)).isoformat(timespec="seconds"),
                             "frame_index": packet.frame_index,
                             "tracker_id": int(tracker_id),
                             "rider_id": reid_id,
@@ -919,11 +923,24 @@ def process_source(
                         events += 1
                 else:
                     for group_idx, plate_read in enumerate(plate_groups):
+                        saved_path = _save_plate_crop(
+                            artifacts,
+                            packet.frame_index,
+                            int(tracker_id),
+                            plate_debug,
+                            plate_text=plate_read.text,
+                            track_state=track_state,
+                            plate_read=read,
+                        )
+                        if saved_path is not None:
+                            saved_crops += 1
+                        crop_file = str(saved_path) if saved_path else ""
                         ts = packet.timestamp + group_idx * 0.1
                         rider_id = f"plate_{plate_read.text}"
                         crossing_counts[rider_id] = crossing_counts.get(rider_id, 0) + 1
                         event: dict[str, object] = {
                             "timestamp": round(ts, 3),
+                            "wall_time": (wall_started_at + timedelta(seconds=ts)).isoformat(timespec="seconds"),
                             "frame_index": packet.frame_index,
                             "tracker_id": int(tracker_id),
                             "rider_id": rider_id,
@@ -940,26 +957,26 @@ def process_source(
                         csv_writer.write(_flatten_event(dict(event)))
                         events += 1
 
-        cv2.line(frame, line_a, line_b, (255, 255, 255), settings.line.width)
-        for record in frame_records:
-            label = f"tid={record.tracker_id}"
-            if record.plate_text:
-                label += f" plate={record.plate_text}:{record.plate_conf:.2f}"
-            _draw_label(frame, record.bbox, label)
-        if not collect_only:
-            top_rows = sorted(crossing_counts.items(), key=lambda item: (-item[1], item[0]))[: settings.output.overlay_top_n]
-            for index, (rider_id, count) in enumerate(top_rows):
-                cv2.putText(
-                    frame,
-                    f"{rider_id} x{count}",
-                    (10, 28 + index * 24),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
         if writer is not None:
+            cv2.line(frame, line_a, line_b, (255, 255, 255), settings.line.width)
+            for record in frame_records:
+                label = f"tid={record.tracker_id}"
+                if record.plate_text:
+                    label += f" plate={record.plate_text}:{record.plate_conf:.2f}"
+                _draw_label(frame, record.bbox, label)
+            if not collect_only:
+                top_rows = sorted(crossing_counts.items(), key=lambda item: (-item[1], item[0]))[: settings.output.overlay_top_n]
+                for index, (rider_id, count) in enumerate(top_rows):
+                    cv2.putText(
+                        frame,
+                        f"{rider_id} x{count}",
+                        (10, 28 + index * 24),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255),
+                        2,
+                        cv2.LINE_AA,
+                    )
             writer.write(frame)
         if (time.perf_counter() - status_started_at) >= settings.stream.status_interval_sec:
             logger(

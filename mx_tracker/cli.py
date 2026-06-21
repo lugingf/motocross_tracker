@@ -233,7 +233,9 @@ def _handle_recount(args: argparse.Namespace) -> int:
     run_dir = args.run_dir or cfg.get("run_dir")
     if not run_dir:
         raise SystemExit("error: --run-dir is required (or set 'run_dir:' in config YAML)")
-    recount(run_dir=run_dir)
+    race_start_sec = args.race_start_sec if args.race_start_sec is not None else cfg.get("race_start_sec", 0.0)
+    race_start_at = args.race_start_at or cfg.get("race_start_at")
+    recount(run_dir=run_dir, race_start_sec=float(race_start_sec), race_start_at=race_start_at)
     return 0
 
 
@@ -373,6 +375,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recount_parser.add_argument("--config", default="configs/recount.yaml", help="Path to recount YAML config")
     recount_parser.add_argument("--run-dir", help="Run directory produced by detect (overrides config)")
+    recount_parser.add_argument("--race-start-sec", type=float, default=None, help="Seconds from video start to race start (lap 1 measured from here)")
+    recount_parser.add_argument("--race-start-at", help="Wall-clock race start time ISO (e.g. 10:31:00 or 2026-06-21T10:31:00+04:00); requires run_info.json")
     recount_parser.set_defaults(func=_handle_recount)
 
     serve_parser = subparsers.add_parser("serve", help="Run the HTTP job service")

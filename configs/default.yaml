@@ -1,10 +1,10 @@
 # Uncomment to avoid typing --source and --out-dir on every run:
-# source: data/videos/race.mp4
-# out_dir: data/artifacts/race_name
+source: data/video/StartTO_17Jan_race.mp4
+out_dir: data/artifacts/StartTO_17Jan_crops
 
 runtime:
   device: auto
-  source_fps_fallback: 30.0
+  source_fps_fallback: 60.0
 
 line:
   value: "50%,5%,50%,95%"
@@ -31,10 +31,10 @@ models:
   plate_zone_select: [4, 5, 7, 8]
 
 reads:
-  scan_every_n_frames: 1
+  scan_every_n_frames: 10
   min_digits: 1
-  vote_window_sec: 2.5
-  track_state_ttl_sec: 10.0
+  vote_window_sec: 1
+  track_state_ttl_sec: 3
 
 reid:
   enabled: false
@@ -48,7 +48,7 @@ stream:
   status_interval_sec: 10.0
 
 output:
-  write_video: true
+  write_video: false
   write_csv: true
   write_jsonl: true
   write_summary: true

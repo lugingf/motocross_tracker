@@ -2,7 +2,7 @@ PYTHON ?= ./myenv/bin/python
 FFMPEG ?= ffmpeg
 CONFIG ?= configs/default.yaml
 SOURCE ?=
-OUT_DIR ?= data/artifacts/run
+OUT_DIR ?=
 RAW_SOURCE ?=
 TRANSCODE_OUTPUT ?=
 CONCAT_GLOB ?=
@@ -117,7 +117,7 @@ line:
 	$(PYTHON) -m mx_tracker line calibrate --source $(SOURCE)
 
 collect:
-	$(PYTHON) -m mx_tracker collect --config $(CONFIG) --source $(SOURCE) --out-dir $(OUT_DIR)
+	$(PYTHON) -m mx_tracker collect --config $(CONFIG) $(if $(SOURCE),--source $(SOURCE),) $(if $(OUT_DIR),--out-dir $(OUT_DIR),)
 
 dataset:
 	$(PYTHON) -m mx_tracker dataset build --raw-dir $(RAW_DIR) --dataset-dir $(DATASET_DIR) --clean
@@ -126,10 +126,10 @@ train:
 	$(PYTHON) -m mx_tracker train --data-yaml $(DATA_YAML) --run-name $(RUN_NAME)
 
 detect-file:
-	$(PYTHON) -m mx_tracker detect file --config $(CONFIG) --source $(SOURCE) --out-dir $(OUT_DIR)
+	$(PYTHON) -m mx_tracker detect file --config $(CONFIG) $(if $(SOURCE),--source $(SOURCE),) $(if $(OUT_DIR),--out-dir $(OUT_DIR),)
 
 detect-stream:
-	$(PYTHON) -m mx_tracker detect stream --config $(CONFIG) --source $(SOURCE) --out-dir $(OUT_DIR)
+	$(PYTHON) -m mx_tracker detect stream --config $(CONFIG) $(if $(SOURCE),--source $(SOURCE),) $(if $(OUT_DIR),--out-dir $(OUT_DIR),)
 
 serve:
 	$(PYTHON) -m mx_tracker serve --config $(CONFIG)

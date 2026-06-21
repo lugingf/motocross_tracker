@@ -21,6 +21,7 @@ import csv
 import fcntl
 import json
 import time
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -28,11 +29,13 @@ import cv2
 import numpy as np
 
 from .reid import ReIdentifier
+from .recount import recount
 
 Logger = Callable[[str], None]
 
 _CSV_FIELDS = [
     "timestamp",
+    "wall_time",
     "frame_index",
     "tracker_id",
     "rider_id",
@@ -41,10 +44,6 @@ _CSV_FIELDS = [
     "plate_conf",
     "lap",
     "lap_time",
-    "bbox_x1",
-    "bbox_y1",
-    "bbox_x2",
-    "bbox_y2",
     "center_x",
     "center_y",
     "crop_file",
@@ -181,11 +180,23 @@ class ReidWatcher:
         self._matched: set[str] = set()    # crop filenames resolved by any method
         self._attempted: set[str] = set()  # crop filenames tried but unmatched
 
+        self._jsonl_mtime: float = 0.0
+
         self._plate_model: object | None = None
         if plate_model_path:
             from ultralytics import YOLO  # noqa: PLC0415
             self._plate_model = YOLO(plate_model_path)
             self.log(f"[reid-watch] plate model: {plate_model_path}, conf_low={plate_conf_low}")
+
+    def _read_started_at(self) -> datetime | None:
+        info_path = self.run_dir / "run_info.json"
+        if not info_path.exists():
+            return None
+        try:
+            data = json.loads(info_path.read_text(encoding="utf-8"))
+            return datetime.fromisoformat(data["started_at"])
+        except Exception:
+            return None
 
     def _rebuild_gallery(self) -> bool:
         """Rebuild gallery from resolved crops. Returns True if gallery changed."""
@@ -249,10 +260,16 @@ class ReidWatcher:
         identity_source: str,
         meta: dict,
     ) -> None:
-        bbox = meta.get("bbox", [])
         center = meta.get("center", [])
+        ts = meta.get("timestamp")
+        wall_time = meta.get("wall_time", "")
+        if not wall_time and ts is not None:
+            started_at = self._read_started_at()
+            if started_at is not None:
+                wall_time = (started_at + timedelta(seconds=float(ts))).isoformat(timespec="seconds")
         row: dict = {
-            "timestamp": meta.get("timestamp", ""),
+            "timestamp": ts if ts is not None else "",
+            "wall_time": wall_time,
             "frame_index": frame_index,
             "tracker_id": tracker_id,
             "rider_id": rider_id,
@@ -261,10 +278,6 @@ class ReidWatcher:
             "plate_conf": round(plate_conf, 3) if plate_conf else "",
             "lap": "",
             "lap_time": "",
-            "bbox_x1": bbox[0] if len(bbox) > 0 else "",
-            "bbox_y1": bbox[1] if len(bbox) > 1 else "",
-            "bbox_x2": bbox[2] if len(bbox) > 2 else "",
-            "bbox_y2": bbox[3] if len(bbox) > 3 else "",
             "center_x": center[0] if len(center) > 0 else "",
             "center_y": center[1] if len(center) > 1 else "",
             "crop_file": str(crop_path),
@@ -374,6 +387,16 @@ class ReidWatcher:
                 elif stop_after_idle_sec and (now - idle_since) >= stop_after_idle_sec:
                     self.log("[reid-watch] idle timeout, stopping")
                     break
+
+            # Recount whenever events.jsonl has grown (new pipeline events or newly resolved)
+            if self.jsonl_path.exists():
+                mtime = self.jsonl_path.stat().st_mtime
+                if mtime != self._jsonl_mtime:
+                    self._jsonl_mtime = mtime
+                    try:
+                        recount(self.run_dir, logger=self.log)
+                    except Exception as exc:
+                        self.log(f"[reid-watch] recount failed: {exc}")
 
             time.sleep(self.poll_interval)
 

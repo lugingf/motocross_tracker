@@ -119,7 +119,7 @@ def recount(
         row.pop("_ts", None)
         row["lap"] = lap
         row["lap_time"] = lap_time
-        if "wall_time" not in row and started_at is not None:
+        if started_at is not None:
             row["wall_time"] = (started_at + timedelta(seconds=ts)).isoformat(timespec="seconds")
         rows.append(row)
 

@@ -14,6 +14,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "runtime": {
         "device": "auto",
         "source_fps_fallback": 30.0,
+        "profile": False,
     },
     "line": {
         "value": "50%,5%,50%,95%",
@@ -92,6 +93,7 @@ def resolve_path(base_dir: Path, value: str | None) -> Path | None:
 class RuntimeSettings(BaseModel):
     device: str = "auto"
     source_fps_fallback: float = 30.0
+    profile: bool = False
 
 
 class LineSettings(BaseModel):

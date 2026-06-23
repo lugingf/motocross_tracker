@@ -37,6 +37,64 @@ from ultralytics import YOLO
 Logger = Callable[[str], None]
 
 
+class StageProfiler:
+    def __init__(self, enabled: bool) -> None:
+        self.enabled = enabled
+        self.reset()
+
+    def reset(self) -> None:
+        self.frames = 0
+        self.totals: dict[str, float] = defaultdict(float)
+        self.counts: dict[str, int] = defaultdict(int)
+        self.started_at = time.perf_counter()
+
+    def frame(self) -> None:
+        if self.enabled:
+            self.frames += 1
+
+    def add(self, name: str, elapsed: float) -> None:
+        if not self.enabled:
+            return
+        self.totals[name] += elapsed
+        self.counts[name] += 1
+
+    def summary_lines(self) -> list[str]:
+        if not self.enabled or self.frames <= 0:
+            return []
+        elapsed = max(time.perf_counter() - self.started_at, 1e-9)
+
+        def ms_per_frame(name: str) -> float:
+            return self.totals.get(name, 0.0) * 1000.0 / self.frames
+
+        def calls(name: str) -> int:
+            return self.counts.get(name, 0)
+
+        lines = [
+            "profile ms/frame "
+            f"wall={elapsed * 1000.0 / self.frames:.1f} "
+            f"total={ms_per_frame('frame_total'):.1f} "
+            f"copy={ms_per_frame('frame_copy'):.1f} "
+            f"vehicle={ms_per_frame('vehicle_track'):.1f} "
+            f"logic={ms_per_frame('track_logic'):.1f} "
+            f"scan={ms_per_frame('plate_scan'):.1f} "
+            f"cross={ms_per_frame('crossing_read'):.1f} "
+            f"reid={ms_per_frame('reid'):.1f} "
+            f"save={ms_per_frame('save_crop'):.1f} "
+            f"io={ms_per_frame('event_io'):.1f} "
+            f"overlay={ms_per_frame('overlay_write'):.1f}",
+            "profile calls "
+            f"frames={self.frames} "
+            f"scan={calls('plate_scan')} "
+            f"cross={calls('crossing_read')} "
+            f"reid={calls('reid')} "
+            f"save={calls('save_crop')} "
+            f"io={calls('event_io')} "
+            f"overlay={calls('overlay_write')}",
+        ]
+        self.reset()
+        return lines
+
+
 @dataclass(slots=True)
 class PlateObservation:
     text: str
@@ -714,8 +772,11 @@ def process_source(
     saved_crops = 0
     events = 0
     status_started_at = time.perf_counter()
+    profiler = StageProfiler(settings.runtime.profile)
 
     for packet in chain((first_packet,), packet_iter):
+        frame_started_at = time.perf_counter()
+        profiler.frame()
         if stop_event.is_set():
             break
         if limit_frames is not None and packet.frame_index > limit_frames:
@@ -728,7 +789,10 @@ def process_source(
         for tracker_id in stale_ids:
             del track_states[tracker_id]
 
+        stage_started_at = time.perf_counter()
         frame = packet.frame.copy()
+        profiler.add("frame_copy", time.perf_counter() - stage_started_at)
+        stage_started_at = time.perf_counter()
         result = vehicle_model.track(
             frame,
             tracker=tracker_yaml,
@@ -739,7 +803,9 @@ def process_source(
             imgsz=settings.models.vehicle_imgsz,
             verbose=False,
         )[0]
+        profiler.add("vehicle_track", time.perf_counter() - stage_started_at)
 
+        stage_started_at = time.perf_counter()
         frame_records: list[DetectionRecord] = []
         boxes = result.boxes
         if boxes is not None and len(boxes) > 0 and boxes.id is not None:
@@ -779,7 +845,9 @@ def process_source(
                             settings.models.plate_zone_select,
                         )
                         if min(plate_input.shape[:2]) >= settings.models.min_bike_crop_px:
+                            plate_started_at = time.perf_counter()
                             read = detect_plate_number(plate_model, plate_input, settings)
+                            profiler.add("plate_scan", time.perf_counter() - plate_started_at)
                         if read.text is not None:
                             track_state.add_observation(
                                 PlateObservation(
@@ -858,7 +926,9 @@ def process_source(
                     settings.models.plate_zone_select,
                 )
 
+                plate_started_at = time.perf_counter()
                 plate_groups = detect_all_plate_numbers(plate_model, plate_debug, settings)
+                profiler.add("crossing_read", time.perf_counter() - plate_started_at)
                 if not plate_groups:
                     chosen = track_state.best_plate(packet.timestamp, settings.reads.vote_window_sec)
                     if chosen is not None:
@@ -869,6 +939,7 @@ def process_source(
                     plate_groups.sort(key=lambda pr: pr.x_center, reverse=reverse)
 
                 if not plate_groups:
+                    crop_started_at = time.perf_counter()
                     saved_path = _save_plate_crop(
                         artifacts,
                         packet.frame_index,
@@ -878,10 +949,13 @@ def process_source(
                         track_state=track_state,
                         plate_read=read,
                     )
+                    profiler.add("save_crop", time.perf_counter() - crop_started_at)
                     if saved_path is not None:
                         saved_crops += 1
                     crop_file = str(saved_path) if saved_path else ""
+                    reid_started_at = time.perf_counter()
                     reid_id = reid.identify(bike_crop) if reid is not None else None
+                    profiler.add("reid", time.perf_counter() - reid_started_at)
                     if reid_id is None:
                         unresolved_crossings += 1
                         unresolved_event: dict[str, object] = {
@@ -899,8 +973,10 @@ def process_source(
                             "center": [center[0], center[1]],
                             "crop_file": crop_file,
                         }
+                        io_started_at = time.perf_counter()
                         jsonl_writer.write(unresolved_event)
                         csv_writer.write(_flatten_event(dict(unresolved_event)))
+                        profiler.add("event_io", time.perf_counter() - io_started_at)
                     else:
                         crossing_counts[reid_id] = crossing_counts.get(reid_id, 0) + 1
                         reid_event: dict[str, object] = {
@@ -918,11 +994,14 @@ def process_source(
                             "center": [center[0], center[1]],
                             "crop_file": crop_file,
                         }
+                        io_started_at = time.perf_counter()
                         jsonl_writer.write(reid_event)
                         csv_writer.write(_flatten_event(dict(reid_event)))
+                        profiler.add("event_io", time.perf_counter() - io_started_at)
                         events += 1
                 else:
                     for group_idx, plate_read in enumerate(plate_groups):
+                        crop_started_at = time.perf_counter()
                         saved_path = _save_plate_crop(
                             artifacts,
                             packet.frame_index,
@@ -932,6 +1011,7 @@ def process_source(
                             track_state=track_state,
                             plate_read=read,
                         )
+                        profiler.add("save_crop", time.perf_counter() - crop_started_at)
                         if saved_path is not None:
                             saved_crops += 1
                         crop_file = str(saved_path) if saved_path else ""
@@ -953,11 +1033,15 @@ def process_source(
                             "center": [center[0], center[1]],
                             "crop_file": crop_file,
                         }
+                        io_started_at = time.perf_counter()
                         jsonl_writer.write(event)
                         csv_writer.write(_flatten_event(dict(event)))
+                        profiler.add("event_io", time.perf_counter() - io_started_at)
                         events += 1
+        profiler.add("track_logic", time.perf_counter() - stage_started_at)
 
         if writer is not None:
+            stage_started_at = time.perf_counter()
             cv2.line(frame, line_a, line_b, (255, 255, 255), settings.line.width)
             for record in frame_records:
                 label = f"tid={record.tracker_id}"
@@ -978,11 +1062,15 @@ def process_source(
                         cv2.LINE_AA,
                     )
             writer.write(frame)
+            profiler.add("overlay_write", time.perf_counter() - stage_started_at)
+        profiler.add("frame_total", time.perf_counter() - frame_started_at)
         if (time.perf_counter() - status_started_at) >= settings.stream.status_interval_sec:
             logger(
                 f"frame={packet.frame_index} ts={packet.timestamp:.2f}s "
                 f"events={events} unresolved={unresolved_crossings} saved_crops={saved_crops}"
             )
+            for line in profiler.summary_lines():
+                logger(line)
             status_started_at = time.perf_counter()
 
     if writer is not None:

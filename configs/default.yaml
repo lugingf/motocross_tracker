@@ -5,6 +5,7 @@ out_dir: data/artifacts/StartTO_17Jan_crops
 runtime:
   device: auto
   source_fps_fallback: 60.0
+  profile: true
 
 line:
   value: "50%,5%,50%,95%"
@@ -31,10 +32,10 @@ models:
   plate_zone_select: [4, 5, 7, 8]
 
 reads:
-  scan_every_n_frames: 10
+  scan_every_n_frames: 3
   min_digits: 1
-  vote_window_sec: 1
-  track_state_ttl_sec: 3
+  vote_window_sec: 3
+  track_state_ttl_sec: 6
 
 reid:
   enabled: false
@@ -48,7 +49,7 @@ stream:
   status_interval_sec: 10.0
 
 output:
-  write_video: false
+  write_video: true
   write_csv: true
   write_jsonl: true
   write_summary: true

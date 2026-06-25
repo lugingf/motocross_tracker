@@ -5,7 +5,7 @@ out_dir: data/artifacts/StartTO_17Jan_crops
 runtime:
   device: auto
   source_fps_fallback: 60.0
-  profile: true
+  profile: false
 
 line:
   value: "50%,5%,50%,95%"
@@ -54,7 +54,8 @@ output:
   write_jsonl: true
   write_summary: true
   overlay_top_n: 10
-  save_plate_crops: true
+  save_plate_crops: false
+  overlay_crossing_text: true
 
 service:
   host: 127.0.0.1

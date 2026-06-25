@@ -455,6 +455,17 @@ def detect_all_plate_numbers(
     return result
 
 
+def _draw_outlined_text(
+    frame: np.ndarray,
+    text: str,
+    origin: tuple[int, int],
+    font_scale: float = 0.7,
+    thickness: int = 2,
+) -> None:
+    cv2.putText(frame, text, origin, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (0, 0, 0), thickness + 4, cv2.LINE_AA)
+    cv2.putText(frame, text, origin, cv2.FONT_HERSHEY_SIMPLEX, font_scale, (255, 255, 255), thickness, cv2.LINE_AA)
+
+
 def _draw_label(frame: np.ndarray, bbox: tuple[int, int, int, int], text: str) -> None:
     x1, y1, x2, _ = bbox
     cv2.rectangle(frame, (x1, y1), (x2, bbox[3]), (0, 200, 255), 2)
@@ -768,6 +779,7 @@ def process_source(
 
     track_states: dict[int, TrackState] = {}
     crossing_counts: dict[str, int] = {}
+    recent_crossings: dict[str, tuple[str, float]] = {}  # rider_id → (display_text, ts)
     unresolved_crossings = 0
     saved_crops = 0
     events = 0
@@ -979,6 +991,7 @@ def process_source(
                         profiler.add("event_io", time.perf_counter() - io_started_at)
                     else:
                         crossing_counts[reid_id] = crossing_counts.get(reid_id, 0) + 1
+                        recent_crossings[reid_id] = (reid_id.removeprefix("plate_"), packet.timestamp)
                         reid_event: dict[str, object] = {
                             "timestamp": round(packet.timestamp, 3),
                             "wall_time": (wall_started_at + timedelta(seconds=packet.timestamp)).isoformat(timespec="seconds"),
@@ -1018,6 +1031,7 @@ def process_source(
                         ts = packet.timestamp + group_idx * 0.1
                         rider_id = f"plate_{plate_read.text}"
                         crossing_counts[rider_id] = crossing_counts.get(rider_id, 0) + 1
+                        recent_crossings[rider_id] = (plate_read.text, packet.timestamp)
                         event: dict[str, object] = {
                             "timestamp": round(ts, 3),
                             "wall_time": (wall_started_at + timedelta(seconds=ts)).isoformat(timespec="seconds"),
@@ -1051,16 +1065,20 @@ def process_source(
             if not collect_only:
                 top_rows = sorted(crossing_counts.items(), key=lambda item: (-item[1], item[0]))[: settings.output.overlay_top_n]
                 for index, (rider_id, count) in enumerate(top_rows):
-                    cv2.putText(
-                        frame,
-                        f"{rider_id} x{count}",
-                        (10, 28 + index * 24),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (255, 255, 255),
-                        2,
-                        cv2.LINE_AA,
+                    _draw_outlined_text(frame, f"{rider_id} x{count}", (16, 36 + index * 28))
+                if settings.output.overlay_crossing_text:
+                    display_sec = settings.line.cooldown_sec
+                    active = sorted(
+                        ((txt, ts) for txt, ts in recent_crossings.values() if packet.timestamp - ts <= display_sec),
+                        key=lambda item: item[1],
                     )
+                    h, w = frame.shape[:2]
+                    font_scale = max(1.5, w / 800.0)
+                    for slot, (txt, _) in enumerate(active):
+                        (tw, th), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, font_scale, 3)
+                        x = (w - tw) // 2
+                        y = h - 32 - slot * int(th * 1.5)
+                        _draw_outlined_text(frame, txt, (x, y), font_scale=font_scale, thickness=3)
             writer.write(frame)
             profiler.add("overlay_write", time.perf_counter() - stage_started_at)
         profiler.add("frame_total", time.perf_counter() - frame_started_at)

@@ -20,7 +20,10 @@ SCALE ?=
 VIDEO_CODEC ?= libx264
 AUDIO_CODEC ?= copy
 
-.PHONY: help gopro-list gopro-prepare ffmpeg-transcode ffmpeg-concat-list ffmpeg-concat ffmpeg-prepare config line collect dataset train detect-file detect-stream serve
+.PHONY: help test gopro-list gopro-prepare ffmpeg-transcode ffmpeg-concat-list ffmpeg-concat ffmpeg-prepare config line collect dataset train detect-file detect-stream serve
+
+test:
+	$(PYTHON) -m pytest tests/ -v
 
 help:
 	@printf '%s\n' \

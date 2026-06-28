@@ -35,7 +35,7 @@ class TestRecountBasic:
         assert len(rows) == 1
         assert rows[0]["rider_id"] == "plate_133"
         assert rows[0]["lap"] == "1"
-        assert rows[0]["lap_time"] == ""  # no previous lap → empty
+        assert float(rows[0]["lap_time"]) == pytest.approx(10.0)  # ts - race_start_sec(0.0)
 
     def test_single_rider_two_laps_computes_lap_time(self, tmp_path):
         _write_jsonl(tmp_path / "events.jsonl", [
@@ -49,7 +49,7 @@ class TestRecountBasic:
         recount(tmp_path)
         rows = _read_results(tmp_path / "results.csv")
         assert rows[0]["lap"] == "1"
-        assert rows[0]["lap_time"] == ""
+        assert float(rows[0]["lap_time"]) == pytest.approx(10.0)  # ts - race_start_sec(0.0)
         assert rows[1]["lap"] == "2"
         assert float(rows[1]["lap_time"]) == pytest.approx(65.5)
 

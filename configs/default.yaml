@@ -56,6 +56,7 @@ output:
   overlay_top_n: 10
   save_plate_crops: false
   overlay_crossing_text: true
+  save_bike_crops_unresolved: false
 
 service:
   host: 127.0.0.1

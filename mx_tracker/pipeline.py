@@ -494,6 +494,7 @@ def _save_plate_crop(
     plate_text: str | None = None,
     track_state: "TrackState | None" = None,
     plate_read: "PlateRead | None" = None,
+    bike_crop: np.ndarray | None = None,
 ) -> Path | None:
     if artifacts.debug_dir is None or crop.size == 0:
         return None
@@ -506,6 +507,8 @@ def _save_plate_crop(
     stem = f"frame{frame_index}_tid{tracker_id}"
     output_path = dest / f"{stem}.jpg"
     cv2.imwrite(str(output_path), debug_image)
+    if plate_text is None and bike_crop is not None and bike_crop.size > 0:
+        cv2.imwrite(str(dest / f"{stem}_bike.jpg"), bike_crop)
 
     meta: dict[str, object] = {
         "frame_index": frame_index,
@@ -960,6 +963,7 @@ def process_source(
                         plate_text=None,
                         track_state=track_state,
                         plate_read=read,
+                        bike_crop=bike_crop if settings.output.save_bike_crops_unresolved else None,
                     )
                     profiler.add("save_crop", time.perf_counter() - crop_started_at)
                     if saved_path is not None:

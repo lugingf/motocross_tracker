@@ -65,6 +65,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "overlay_top_n": 10,
         "save_plate_crops": False,
         "overlay_crossing_text": False,
+        "save_bike_crops_unresolved": False,
     },
     "service": {
         "host": "127.0.0.1",
@@ -167,6 +168,7 @@ class OutputSettings(BaseModel):
     overlay_top_n: int = 10
     save_plate_crops: bool = False
     overlay_crossing_text: bool = False
+    save_bike_crops_unresolved: bool = False
 
 
 class ServiceSettings(BaseModel):

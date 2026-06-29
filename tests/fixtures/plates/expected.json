@@ -1,0 +1,88 @@
+[
+  {
+    "file": "frame10442_tid1383.jpg",
+    "expected": [
+      "26"
+    ]
+  },
+  {
+    "file": "frame1372_tid180.jpg",
+    "expected": [
+      "75"
+    ]
+  },
+  {
+    "file": "frame15660_tid1929.jpg",
+    "expected": [
+      "4"
+    ]
+  },
+  {
+    "file": "frame15753_tid1952.jpg",
+    "expected": [
+      "11"
+    ]
+  },
+  {
+    "file": "frame16030_tid2006.jpg",
+    "expected": [
+      "83"
+    ]
+  },
+  {
+    "file": "frame16123_tid2016.jpg",
+    "expected": [
+      "44"
+    ]
+  },
+  {
+    "file": "frame16406_tid2057.jpg",
+    "expected": [
+      "291"
+    ]
+  },
+  {
+    "file": "frame17130_tid2135.jpg",
+    "expected": [
+      "8"
+    ]
+  },
+  {
+    "file": "frame23434_tid2842.jpg",
+    "expected": [
+      "291",
+      "44"
+    ],
+    "note": "two motorcycles in one crop, split by large digit gap"
+  },
+  {
+    "file": "frame2542_tid91.jpg",
+    "expected": [
+      "28"
+    ]
+  },
+  {
+    "file": "frame27715_tid728.jpg",
+    "expected": [
+      "106"
+    ]
+  },
+  {
+    "file": "frame33617_tid859.jpg",
+    "expected": [
+      "188"
+    ]
+  },
+  {
+    "file": "frame33735_tid872.jpg",
+    "expected": [
+      "100"
+    ]
+  },
+  {
+    "file": "frame7216_tid276.jpg",
+    "expected": [
+      "231"
+    ]
+  }
+]

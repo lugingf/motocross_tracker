@@ -20,6 +20,71 @@
 
 Базовые зависимости перечислены в [requirements.txt](requirements.txt).
 
+## Модели и веса
+
+Веса моделей (`*.pt`) лежат в `data/models/` и **не хранятся в git** — вся папка `data/` в `.gitignore`, чтобы не раздувать историю бинарями. Вместо этого модели публикуются как артефакты **GitHub Release** (релиз = версия набора весов), а в репозитории версионируется только манифест [`models.lock`](models.lock) с тегом релиза, `sha256` и размером каждого файла. Это делает воспроизводимым вопрос «какие веса дали этот результат».
+
+Модели, которые ожидает конфиг по умолчанию:
+
+| Файл                        | Роль                    | Источник                                              |
+|-----------------------------|-------------------------|-------------------------------------------------------|
+| `yolov8n.pt`                | детекция мотоциклов     | стоковая модель ultralytics (качается автоматически) |
+| `yolov8n_plates_ft1.pt`     | номерные таблички/цифры | обученная в проекте, хранится в релизе                |
+
+### Разовая настройка
+
+Работа с релизами идёт через GitHub CLI:
+
+```bash
+brew install gh
+gh auth login
+```
+
+> ⚠️ Если в твоём shell `gh` перекрыт алиасом (например, на `git log`), вызывай настоящий бинарник: `command gh auth login`. На `make`-таргеты это не влияет — они исполняются в `/bin/sh`, где алиасов нет.
+
+### Команды
+
+| Команда              | Что делает                                                                                  |
+|----------------------|---------------------------------------------------------------------------------------------|
+| `make get-models`    | Скачивает модели из релиза, указанного в `models.lock`, и сверяет `sha256`.                 |
+| `make verify-models` | Проверяет локальные файлы против `models.lock` без сети.                                     |
+| `make save-models`   | Заливает `data/models/*.pt` в релиз и перезаписывает `models.lock`.                          |
+| `make lock-models`   | Перегенерирует `models.lock` из локальных файлов без загрузки (например, после удаления).   |
+
+Переменные: `MODELS` — список файлов (по умолчанию все `*.pt`), `MODELS_TAG` — тег релиза (по умолчанию `models-v1`), `MODELS_NOTES` — заметки к релизу.
+
+### Получить модели (новая машина / CI)
+
+```bash
+make get-models
+```
+
+Читает `models.lock`, качает его тег в `data/models/` и проверяет `sha256`. Стоковый `yolov8n.pt` при этом можно и не хранить в релизе — ultralytics докачает его сам при первом запуске.
+
+### Опубликовать новые веса
+
+После нового обучения:
+
+```bash
+# залить только кастомную модель под новым тегом
+make save-models MODELS="yolov8n_plates_ft1.pt" MODELS_TAG=models-v2 MODELS_NOTES="ft2, 98.7% на new_dataset"
+
+# зафиксировать, какая версия весов актуальна
+git add models.lock && git commit -m "Bump models to v2"
+```
+
+`make save-models` создаёт релиз, если его нет, или дозаливает ассеты с `--clobber`, если тег уже существует.
+
+### Удалить лишнюю модель
+
+```bash
+rm data/models/yolov8n_old.pt
+make lock-models                                        # обновить манифест
+# если файл уже был в релизе — удалить ассет:
+command gh release delete-asset models-v1 yolov8n_old.pt
+git add models.lock && git commit -m "Drop old model"
+```
+
 ## Структура запуска
 
 Основной вход:
@@ -820,4 +885,7 @@ make train DATA_YAML=data/datasets/session_01/data.yaml RUN_NAME=mx_session_01
 make detect-file SOURCE=race.mp4 OUT_DIR=artifacts/race_01
 make detect-stream SOURCE=rtsp://camera/stream OUT_DIR=artifacts/live_01
 make serve
+make get-models
+make verify-models
+make save-models MODELS="yolov8n_plates_ft1.pt" MODELS_TAG=models-v2
 ```

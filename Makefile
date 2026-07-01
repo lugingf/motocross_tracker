@@ -19,8 +19,11 @@ FPS ?=
 SCALE ?=
 VIDEO_CODEC ?= libx264
 AUDIO_CODEC ?= copy
+MODELS_TAG ?= models-v1
+MODELS ?=
+MODELS_NOTES ?=
 
-.PHONY: help test gopro-list gopro-prepare ffmpeg-transcode ffmpeg-concat-list ffmpeg-concat ffmpeg-prepare config line collect dataset train detect-file detect-stream serve
+.PHONY: help test gopro-list gopro-prepare ffmpeg-transcode ffmpeg-concat-list ffmpeg-concat ffmpeg-prepare config line collect dataset train detect-file detect-stream serve save-models get-models verify-models lock-models
 
 test:
 	$(PYTHON) -m pytest tests/ -v
@@ -40,7 +43,11 @@ help:
 	"make train                 - train a new plate model" \
 	"make detect-file           - process a finite video file" \
 	"make detect-stream         - process a live source or replay" \
-	"make serve                 - start the HTTP service"
+	"make serve                 - start the HTTP service" \
+	"make save-models           - upload data/models/*.pt to a GitHub Release + write models.lock" \
+	"make get-models            - download the models named in models.lock" \
+	"make verify-models         - check local models against models.lock (no network)" \
+	"make lock-models           - rewrite models.lock from local files without uploading"
 
 gopro-list:
 	@test -n "$(GOPRO_PATTERN)" || (echo "GOPRO_PATTERN is required"; exit 1)
@@ -136,3 +143,15 @@ detect-stream:
 
 serve:
 	$(PYTHON) -m mx_tracker serve --config $(CONFIG)
+
+save-models:
+	$(PYTHON) utils/models.py save --tag $(MODELS_TAG) $(if $(MODELS_NOTES),--notes "$(MODELS_NOTES)",) $(MODELS)
+
+get-models:
+	$(PYTHON) utils/models.py get
+
+verify-models:
+	$(PYTHON) utils/models.py verify
+
+lock-models:
+	$(PYTHON) utils/models.py lock --tag $(MODELS_TAG) $(MODELS)

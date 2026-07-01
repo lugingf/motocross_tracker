@@ -1,0 +1,20 @@
+{
+  "tag": "models-v1",
+  "models": [
+    {
+      "file": "yolov8n.pt",
+      "sha256": "31e20dde3def09e2cf938c7be6fe23d9150bbbe503982af13345706515f2ef95",
+      "size": 6534387
+    },
+    {
+      "file": "yolov8n_mtr3.pt",
+      "sha256": "b6a9fbddfe894f6163c60f145e49c72ca4a9db9ea50bf17648e68ce2acaff7c0",
+      "size": 6223210
+    },
+    {
+      "file": "yolov8n_plates_ft1.pt",
+      "sha256": "dace0f2961ce46600e5fe2a78b813c595e007595e8c3e3ea7e8cba7cc83ab6a4",
+      "size": 6244714
+    }
+  ]
+}

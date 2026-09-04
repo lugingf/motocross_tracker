@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import csv
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -43,6 +43,25 @@ def _flatten(event: dict) -> dict:
     return out
 
 
+def _parse_race_start_at(value: str, started_at: datetime) -> datetime:
+    """Parse a wall-clock race start against the run's own start time.
+
+    Accepts a full ISO datetime ("2026-06-21T10:31:00+04:00"), a naive
+    datetime, or a bare time of day ("10:31:00", "10:31") — the latter two
+    inherit the missing date and timezone from `started_at`, so the documented
+    time-only form works instead of silently falling back to race_start_sec.
+    """
+    text = value.strip()
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        clock = time.fromisoformat(text)  # raises ValueError for real garbage
+        parsed = datetime.combine(started_at.date(), clock)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=started_at.tzinfo)
+    return parsed
+
+
 def _read_started_at(run_dir: Path) -> datetime | None:
     info_path = run_dir / "run_info.json"
     if not info_path.exists():
@@ -73,10 +92,12 @@ def recount(
     # If race_start_at (wall-clock ISO time) provided, convert to seconds offset
     if race_start_at is not None and started_at is not None:
         try:
-            race_start_dt = datetime.fromisoformat(race_start_at)
+            race_start_dt = _parse_race_start_at(race_start_at, started_at)
             race_start_sec = (race_start_dt - started_at).total_seconds()
         except Exception:
             log(f"[recount] warning: could not parse race_start_at={race_start_at!r}, using race_start_sec={race_start_sec}")
+    elif race_start_at is not None:
+        log(f"[recount] warning: race_start_at={race_start_at!r} needs run_info.json, using race_start_sec={race_start_sec}")
 
     # Read all resolved events
     resolved: list[dict] = []

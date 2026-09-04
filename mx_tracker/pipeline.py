@@ -41,6 +41,7 @@ from .geometry import (
     zone_crop,
 )
 from .models import DetectionModels
+from .motion import GateDecision, MotionGate
 from .overlay import OverlayWriter
 from .plate_reading import (
     PlateRead,
@@ -64,6 +65,7 @@ __all__ = [
     "TrackState",
     "DetectionRecord",
     "FramePacket",
+    "MotionGate",
     "RunArtifacts",
     "StageProfiler",
     "SourceProcessor",
@@ -124,6 +126,7 @@ class StageProfiler:
             f"wall={elapsed * 1000.0 / self.frames:.1f} "
             f"total={ms_per_frame('frame_total'):.1f} "
             f"copy={ms_per_frame('frame_copy'):.1f} "
+            f"gate={ms_per_frame('motion_gate'):.1f} "
             f"vehicle={ms_per_frame('vehicle_track'):.1f} "
             f"logic={ms_per_frame('track_logic'):.1f} "
             f"scan={ms_per_frame('plate_scan'):.1f} "
@@ -134,6 +137,8 @@ class StageProfiler:
             f"overlay={ms_per_frame('overlay_write'):.1f}",
             "profile calls "
             f"frames={self.frames} "
+            f"gated={calls('frame_gated')} "
+            f"vehicle={calls('vehicle_track')} "
             f"scan={calls('plate_scan')} "
             f"cross={calls('crossing_read')} "
             f"reid={calls('reid')} "
@@ -200,6 +205,7 @@ class SourceProcessor:
         self.unresolved_crossings = 0
         self.saved_crops = 0
         self.events = 0
+        self.motion_gate: MotionGate | None = None
 
     # -- run lifecycle -----------------------------------------------------
 
@@ -230,6 +236,10 @@ class SourceProcessor:
             first_packet.height,
             self.collect_only,
         )
+        self.motion_gate = MotionGate(
+            self.settings, line_a, line_b, first_packet.width, first_packet.height
+        )
+        self.log(self.motion_gate.describe())
         profiler = StageProfiler(self.settings.runtime.profile)
         status_started_at = time.perf_counter()
 
@@ -308,6 +318,19 @@ class SourceProcessor:
         profiler: StageProfiler,
         artifacts: RunArtifacts,
     ) -> None:
+        with _Timer(profiler, "motion_gate"):
+            gate: GateDecision = self.motion_gate.should_process(packet.frame, packet.timestamp)
+        if not gate.process:
+            profiler.add("frame_gated", 0.0)
+            # The overlay still needs every frame, or the written video drifts
+            # out of step with the event timestamps.
+            if overlay.enabled:
+                with _Timer(profiler, "overlay_write"):
+                    overlay.render(
+                        packet.frame.copy(), packet, [], self.crossing_counts, self.recent_crossings
+                    )
+            return
+
         with _Timer(profiler, "frame_copy"):
             frame = packet.frame.copy()
         with _Timer(profiler, "vehicle_track"):
@@ -323,6 +346,9 @@ class SourceProcessor:
             for bbox_raw, class_id, tracker_id in zip(xyxy, classes, tracker_ids):
                 if class_id != self.settings.models.motorcycle_class_id:
                     continue
+                # Keep the gate open around a rider already past the entry
+                # zone — its motion no longer shows up where the gate looks.
+                self.motion_gate.note_detection(packet.timestamp)
                 self._process_track(
                     packet,
                     int(tracker_id),
@@ -602,9 +628,14 @@ class SourceProcessor:
     # -- reporting ---------------------------------------------------------
 
     def _log_status(self, packet: FramePacket) -> None:
+        gated = ""
+        if self.motion_gate is not None and self.motion_gate.active:
+            stats = self.motion_gate.stats()
+            gated = f" gated={stats['gated_frames']}/{packet.frame_index}"
         self.log(
             f"frame={packet.frame_index} ts={packet.timestamp:.2f}s "
-            f"events={self.events} unresolved={self.unresolved_crossings} saved_crops={self.saved_crops}"
+            f"events={self.events} unresolved={self.unresolved_crossings} "
+            f"saved_crops={self.saved_crops}{gated}"
         )
 
     def _finalize(self, artifacts: RunArtifacts, line_value: str, source_stats: dict[str, object]) -> dict[str, object]:
@@ -621,6 +652,7 @@ class SourceProcessor:
             "unresolved_crossings": self.unresolved_crossings,
             "crossing_counts": self.crossing_counts,
             "source_stats": source_stats,
+            "motion_gate": self.motion_gate.stats() if self.motion_gate is not None else None,
         }
         if artifacts.summary_path is not None:
             artifacts.summary_path.write_text(json.dumps(summary, indent=2, ensure_ascii=False))

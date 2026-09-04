@@ -175,26 +175,70 @@ def detect_crossing(
 
     side_prev, dist_prev = point_line_side_and_dist(prev_point, line_a, line_b)
     side_cur, dist_cur = point_line_side_and_dist(cur_point, line_a, line_b)
-    inside_prev = dist_prev <= line_width / 2.0
-    inside_cur = dist_cur <= line_width / 2.0
-    crossed = False
-    if (side_prev * side_cur < 0) and (min(dist_prev, dist_cur) <= line_width):
-        crossed = True
-    elif inside_prev != inside_cur:
-        crossed = True
-    elif segments_intersect(prev_point, cur_point, line_a, line_b):
-        crossed = True
+    # A crossing requires the centre to actually change sides: either the sign
+    # flips near enough to the line, or the travelled segment cuts the finish
+    # segment (which also covers a centre landing exactly on the line). Merely
+    # entering or leaving the tolerance band on one side is not a crossing.
+    crossed = (
+        (side_prev * side_cur < 0) and (min(dist_prev, dist_cur) <= line_width)
+    ) or segments_intersect(prev_point, cur_point, line_a, line_b)
     direction = None
     if crossed:
         if side_cur < side_prev:
             direction = "left_to_right"
         elif side_cur > side_prev:
             direction = "right_to_left"
-        else:
-            direction = "left_to_right"
         if direction != direction_mode:
+            # Includes the undeterminable case (both centres on the line):
+            # without a direction there is nothing to count.
             crossed = False
     return CrossingDecision(crossed, direction, min(dist_prev, dist_cur))
+
+
+def entry_zone_rect(
+    line_a: tuple[int, int],
+    line_b: tuple[int, int],
+    direction: str,
+    frame_width: int,
+    frame_height: int,
+    fraction: float,
+) -> tuple[int, int, int, int] | None:
+    """The strip of the frame riders enter through, as (x1, y1, x2, y2).
+
+    Riders approach the finish line from one side and leave on the other, and
+    `detect_crossing` measures that as the `side` sign flipping: a
+    `left_to_right` crossing runs +1 → -1, so riders come from the +1 side.
+    This picks the axis they travel along (across the line, not along it) and
+    returns the `fraction` of the frame at the incoming end of that axis —
+    for the usual vertical line with `left_to_right`, the left quarter.
+
+    Returns None when the line does not separate the two ends of that axis,
+    which leaves nowhere unambiguous for riders to come from.
+    """
+    incoming_side = 1.0 if direction == "left_to_right" else -1.0
+    fraction = min(max(fraction, 0.0), 1.0)
+    along_x = abs(line_b[1] - line_a[1]) >= abs(line_b[0] - line_a[0])
+
+    if along_x:
+        span = max(1, min(frame_width, int(round(frame_width * fraction))))
+        low = (0, 0, span, frame_height)
+        high = (frame_width - span, 0, frame_width, frame_height)
+    else:
+        span = max(1, min(frame_height, int(round(frame_height * fraction))))
+        low = (0, 0, frame_width, span)
+        high = (0, frame_height - span, frame_width, frame_height)
+
+    if low == high:
+        # The strip spans the whole axis, so there is no incoming end to pick
+        # — watching everything is the safe reading of fraction=1.0.
+        return low
+
+    for rect in (low, high):
+        centre = ((rect[0] + rect[2]) / 2.0, (rect[1] + rect[3]) / 2.0)
+        side, _ = point_line_side_and_dist(centre, line_a, line_b)
+        if side == incoming_side:
+            return rect
+    return None
 
 
 def pick_line_on_frame(frame: np.ndarray) -> tuple[tuple[int, int], tuple[int, int]] | None:

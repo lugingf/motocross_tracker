@@ -31,6 +31,18 @@ models:
   plate_zone_n: 9
   plate_zone_select: [4, 5, 7, 8]
 
+# Пропускать детекцию на кадрах, где во въездной зоне ничего не менялось.
+# Зона — четверть кадра со стороны, откуда байки приезжают (по line.direction).
+motion_gate:
+  enabled: true
+  zone_fraction: 0.25
+  downscale: 4
+  pixel_delta: 25
+  min_area_fraction: 0.004
+  hold_sec: 1.0
+  warmup_frames: 30
+  background_alpha: 0.02
+
 reads:
   scan_every_n_frames: 3
   min_digits: 1

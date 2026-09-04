@@ -189,3 +189,91 @@ class TestZoneCrop:
         self.img[zone_h:2*zone_h, zone_w:2*zone_w] = (0, 0, 255)
         result = zone_crop(self.img, n_zones=9, selected=[5])
         assert result[:, :, 2].max() == 255  # red channel present
+
+
+# ---------------------------------------------------------------------------
+# detect_crossing — the tolerance band is a tolerance, not a trigger.
+#
+# line.width widens *how far off* the line a genuine side change may happen.
+# A bike that merely enters or leaves that band while staying on one side has
+# not crossed anything, and must not be counted as a lap.
+# ---------------------------------------------------------------------------
+
+class TestDetectCrossingToleranceBand:
+    # Vertical line at x=500 spanning the frame; band half-width = 10 px.
+    A, B = (500, 0), (500, 1000)
+    WIDTH = 20
+
+    def _decide(self, prev, cur, direction="left_to_right"):
+        return detect_crossing(prev, cur, self.A, self.B, self.WIDTH, direction)
+
+    def test_entering_band_from_the_right_is_not_a_crossing(self):
+        # 600 → 505: gets close to the line but never reaches the other side.
+        assert self._decide((600, 500), (505, 500)).crossed is False
+
+    def test_leaving_band_to_the_right_is_not_a_crossing(self):
+        assert self._decide((505, 500), (600, 500)).crossed is False
+
+    def test_entering_band_from_the_left_is_not_a_crossing(self):
+        assert self._decide((400, 500), (495, 500)).crossed is False
+
+    def test_leaving_band_to_the_left_is_not_a_crossing(self):
+        assert self._decide((495, 500), (400, 500)).crossed is False
+
+    def test_band_entry_does_not_bypass_the_direction_filter(self):
+        # Regression: band entry/exit used to be reported as "left_to_right"
+        # regardless of actual motion, so it always passed the default filter.
+        for prev, cur in (((600, 500), (505, 500)), ((505, 500), (600, 500))):
+            for mode in ("left_to_right", "right_to_left"):
+                assert self._decide(prev, cur, mode).crossed is False
+
+    def test_approach_turn_back_and_leave_counts_nothing(self):
+        # A bike that rolls up to the line, stops and reverses away.
+        path = [(600, 500), (540, 500), (505, 500), (503, 500), (520, 500), (600, 500)]
+        crossings = sum(
+            self._decide(prev, cur).crossed for prev, cur in zip(path, path[1:])
+        )
+        assert crossings == 0
+
+    def test_moving_through_the_band_still_counts_once(self):
+        path = [(600, 500), (520, 500), (495, 500), (450, 500)]
+        decisions = [self._decide(prev, cur) for prev, cur in zip(path, path[1:])]
+        crossed = [d for d in decisions if d.crossed]
+        assert len(crossed) == 0, "right→left motion is blocked by the ltr filter"
+        rtl = [
+            self._decide(prev, cur, "right_to_left")
+            for prev, cur in zip(path, path[1:])
+        ]
+        assert sum(d.crossed for d in rtl) == 1
+
+    def test_far_side_change_beyond_the_band_still_intersects(self):
+        # A fast bike can jump the whole band in one frame: both endpoints sit
+        # further than line_width from the line, but the path cuts the segment.
+        decision = self._decide((400, 500), (700, 500))
+        assert decision.crossed is True
+        assert decision.direction == "left_to_right"
+
+    def test_centre_landing_exactly_on_the_line_then_continuing(self):
+        assert self._decide((450, 500), (500, 500)).crossed is True
+        assert self._decide((500, 500), (550, 500)).crossed is True
+
+    def test_both_centres_on_the_line_has_no_determinable_direction(self):
+        decision = self._decide((500, 400), (500, 600))
+        assert decision.direction is None
+        assert decision.crossed is False
+
+
+class TestDetectCrossingDirectionDependsOnEndpointOrder:
+    """`direction` is measured against the line's own a→b orientation.
+
+    Picking the same finish line bottom-to-top instead of top-to-bottom flips
+    which physical direction counts as `left_to_right`, so a calibrated line
+    must keep the endpoint order it was calibrated with.
+    """
+
+    def test_same_motion_flips_label_when_endpoints_are_swapped(self):
+        prev, cur = (400, 500), (600, 500)
+        top_down = detect_crossing(prev, cur, (500, 0), (500, 1000), 20, "left_to_right")
+        bottom_up = detect_crossing(prev, cur, (500, 1000), (500, 0), 20, "left_to_right")
+        assert top_down.direction == "left_to_right"
+        assert bottom_up.direction == "right_to_left"

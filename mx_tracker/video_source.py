@@ -62,7 +62,9 @@ class VideoSource:
     def probe(self) -> dict[str, object]:
         capture = _open_capture(self.source)
         try:
-            fps = capture.get(cv2.CAP_PROP_FPS) or self.settings.runtime.source_fps_fallback
+            reported_fps = capture.get(cv2.CAP_PROP_FPS)
+            # Backends report 0 or NaN for sources without a usable frame rate.
+            fps = reported_fps if reported_fps and reported_fps > 0 else self.settings.runtime.source_fps_fallback
             width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
         finally:
@@ -82,6 +84,12 @@ class VideoSource:
         height = int(self.stats["height"])
         stream_started_at = time.perf_counter()
 
+        # Timestamps must never move backwards: a looped file rewinds its own
+        # media clock, so each new pass continues from where the previous
+        # ended. The pipeline relies on this for TTL eviction and cooldowns.
+        timestamp_offset = 0.0
+        timestamp = 0.0
+
         while not stop_event.is_set():
             capture = _open_capture(self.source)
             segment_started_at = time.perf_counter()
@@ -100,8 +108,16 @@ class VideoSource:
                             time.sleep(target_ts - elapsed)
                     timestamp = time.perf_counter() - stream_started_at
                 else:
+                    # POS_MSEC is the presentation time of the frame just
+                    # read, so the first frame legitimately reports 0.0 —
+                    # the fallback must be indexed from 0, not from 1, or
+                    # frames 1 and 2 collide on the same timestamp.
                     ts_ms = capture.get(cv2.CAP_PROP_POS_MSEC)
-                    timestamp = (ts_ms / 1000.0) if ts_ms else frame_index / max(fps, 1.0)
+                    if ts_ms and ts_ms > 0:
+                        timestamp = ts_ms / 1000.0
+                    else:
+                        timestamp = (segment_frame_index - 1) / max(fps, 1.0)
+                    timestamp += timestamp_offset
                 yield FramePacket(
                     frame=frame,
                     frame_index=frame_index,
@@ -113,6 +129,7 @@ class VideoSource:
             capture.release()
             if self.mode == "file":
                 if self.settings.stream.loop_file:
+                    timestamp_offset = timestamp + 1.0 / max(fps, 1.0)
                     continue
                 break
             reconnects += 1

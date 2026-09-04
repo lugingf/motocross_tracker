@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from .runtime import REPO_ROOT
 
@@ -39,6 +39,16 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "min_bike_crop_px": 96,
         "plate_zone_n": 1,
         "plate_zone_select": [1],
+    },
+    "motion_gate": {
+        "enabled": True,
+        "zone_fraction": 0.25,
+        "downscale": 4,
+        "pixel_delta": 25.0,
+        "min_area_fraction": 0.004,
+        "hold_sec": 1.0,
+        "warmup_frames": 30,
+        "background_alpha": 0.02,
     },
     "reads": {
         "scan_every_n_frames": 1,
@@ -99,10 +109,12 @@ class RuntimeSettings(BaseModel):
 
 
 class LineSettings(BaseModel):
+    model_config = ConfigDict(validate_default=True)
+
     value: str = "50%,5%,50%,95%"
     width: int = 24
     cooldown_sec: float = 2.0
-    direction: str = "either"
+    direction: str = "left_to_right"
     read_distance_multiplier: float = 2.5
 
     @field_validator("direction")
@@ -138,6 +150,31 @@ class ModelSettings(BaseModel):
         if v not in allowed:
             raise ValueError(f"plate_zone_n must be one of {sorted(allowed)}")
         return v
+
+    @model_validator(mode="after")
+    def validate_plate_zone_select(self) -> "ModelSettings":
+        out_of_range = [z for z in self.plate_zone_select if not 1 <= z <= self.plate_zone_n]
+        if out_of_range:
+            raise ValueError(
+                f"plate_zone_select entries {out_of_range} are outside 1..{self.plate_zone_n} "
+                f"(plate_zone_n={self.plate_zone_n})"
+            )
+        return self
+
+
+class MotionGateSettings(BaseModel):
+    """Skip detection on frames where nothing has entered the frame yet."""
+
+    model_config = ConfigDict(validate_default=True)
+
+    enabled: bool = True
+    zone_fraction: float = Field(default=0.25, gt=0.0, le=1.0)
+    downscale: int = Field(default=4, ge=1)
+    pixel_delta: float = Field(default=25.0, gt=0.0, le=255.0)
+    min_area_fraction: float = Field(default=0.004, ge=0.0, le=1.0)
+    hold_sec: float = Field(default=1.0, ge=0.0)
+    warmup_frames: int = Field(default=30, ge=0)
+    background_alpha: float = Field(default=0.02, gt=0.0, le=1.0)
 
 
 class ReadSettings(BaseModel):
@@ -180,6 +217,7 @@ class TrackerSettings(BaseModel):
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     line: LineSettings = Field(default_factory=LineSettings)
     models: ModelSettings = Field(default_factory=ModelSettings)
+    motion_gate: MotionGateSettings = Field(default_factory=MotionGateSettings)
     reads: ReadSettings = Field(default_factory=ReadSettings)
     reid: ReIdSettings = Field(default_factory=ReIdSettings)
     stream: StreamSettings = Field(default_factory=StreamSettings)

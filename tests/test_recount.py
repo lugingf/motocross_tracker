@@ -142,3 +142,91 @@ class TestRecountBasic:
         out = recount(tmp_path)
         assert out == tmp_path / "results.csv"
         assert out.exists()
+
+
+# ---------------------------------------------------------------------------
+# race_start_at — the wall-clock alternative to race_start_sec.
+#
+# configs/recount.yaml and the CLI help both document a bare time of day
+# ("10:31:00"). That form used to fail parsing and silently fall back to
+# race_start_sec=0, so lap 1 was measured from the start of the video.
+# ---------------------------------------------------------------------------
+
+def _run_with_start(tmp_path: Path, started_at: str, events: list[dict]) -> None:
+    (tmp_path / "run_info.json").write_text(
+        json.dumps({"started_at": started_at, "source": "race.mp4"}), encoding="utf-8"
+    )
+    _write_jsonl(tmp_path / "events.jsonl", events)
+
+
+def _event(ts: float, rider: str = "plate_133") -> dict:
+    return {
+        "timestamp": ts, "rider_id": rider, "identity_source": "plate",
+        "frame_index": int(ts * 30), "tracker_id": 1, "plate_text": rider.removeprefix("plate_"),
+        "plate_conf": 0.9, "lap": "", "lap_time": "",
+        "bbox": [0, 0, 50, 50], "center": [25, 25], "crop_file": "",
+    }
+
+
+class TestRaceStartAt:
+    STARTED = "2026-06-21T10:30:00+04:00"
+
+    def test_bare_time_of_day_offsets_lap_one(self, tmp_path):
+        # Video starts 10:30:00, race starts 10:31:00 → 60 s in.
+        # A crossing at t=100 s is 40 s into lap 1, not 100 s.
+        _run_with_start(tmp_path, self.STARTED, [_event(100.0)])
+        recount(tmp_path, race_start_at="10:31:00")
+        rows = _read_results(tmp_path / "results.csv")
+        assert float(rows[0]["lap_time"]) == pytest.approx(40.0)
+
+    def test_bare_time_without_seconds_accepted(self, tmp_path):
+        _run_with_start(tmp_path, self.STARTED, [_event(100.0)])
+        recount(tmp_path, race_start_at="10:31")
+        rows = _read_results(tmp_path / "results.csv")
+        assert float(rows[0]["lap_time"]) == pytest.approx(40.0)
+
+    def test_full_iso_with_offset_accepted(self, tmp_path):
+        _run_with_start(tmp_path, self.STARTED, [_event(100.0)])
+        recount(tmp_path, race_start_at="2026-06-21T10:31:00+04:00")
+        rows = _read_results(tmp_path / "results.csv")
+        assert float(rows[0]["lap_time"]) == pytest.approx(40.0)
+
+    def test_naive_iso_datetime_inherits_run_timezone(self, tmp_path):
+        _run_with_start(tmp_path, self.STARTED, [_event(100.0)])
+        recount(tmp_path, race_start_at="2026-06-21T10:31:00")
+        rows = _read_results(tmp_path / "results.csv")
+        assert float(rows[0]["lap_time"]) == pytest.approx(40.0)
+
+    def test_naive_run_info_accepts_naive_race_start(self, tmp_path):
+        _run_with_start(tmp_path, "2026-06-21T10:30:00", [_event(100.0)])
+        recount(tmp_path, race_start_at="10:31:00")
+        rows = _read_results(tmp_path / "results.csv")
+        assert float(rows[0]["lap_time"]) == pytest.approx(40.0)
+
+    def test_only_lap_one_is_measured_from_race_start(self, tmp_path):
+        _run_with_start(tmp_path, self.STARTED, [_event(100.0), _event(220.0)])
+        recount(tmp_path, race_start_at="10:31:00")
+        rows = _read_results(tmp_path / "results.csv")
+        assert [float(r["lap_time"]) for r in rows] == [
+            pytest.approx(40.0), pytest.approx(120.0)
+        ]
+
+    def test_race_start_at_overrides_race_start_sec(self, tmp_path):
+        _run_with_start(tmp_path, self.STARTED, [_event(100.0)])
+        recount(tmp_path, race_start_sec=10.0, race_start_at="10:31:00")
+        rows = _read_results(tmp_path / "results.csv")
+        assert float(rows[0]["lap_time"]) == pytest.approx(40.0)
+
+    def test_unparsable_value_warns_and_falls_back(self, tmp_path):
+        _run_with_start(tmp_path, self.STARTED, [_event(100.0)])
+        messages: list[str] = []
+        recount(tmp_path, logger=messages.append, race_start_sec=10.0, race_start_at="not a time")
+        rows = _read_results(tmp_path / "results.csv")
+        assert float(rows[0]["lap_time"]) == pytest.approx(90.0)
+        assert any("could not parse" in m for m in messages)
+
+    def test_missing_run_info_warns_that_it_is_required(self, tmp_path):
+        _write_jsonl(tmp_path / "events.jsonl", [_event(100.0)])
+        messages: list[str] = []
+        recount(tmp_path, logger=messages.append, race_start_at="10:31:00")
+        assert any("run_info.json" in m for m in messages)

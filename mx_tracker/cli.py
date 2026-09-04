@@ -59,6 +59,14 @@ def _load_and_override_settings(args: argparse.Namespace):
         settings.stream.max_reconnects = args.max_reconnects
     if getattr(args, "digits_only", False):
         settings.models.plate_has_class = False
+    if getattr(args, "enable_motion_gate", False):
+        settings.motion_gate.enabled = True
+    if getattr(args, "disable_motion_gate", False):
+        settings.motion_gate.enabled = False
+    if getattr(args, "motion_gate_zone", None) is not None:
+        settings.motion_gate.zone_fraction = args.motion_gate_zone
+    if getattr(args, "motion_gate_min_area", None) is not None:
+        settings.motion_gate.min_area_fraction = args.motion_gate_min_area
     return settings, base_dir
 
 
@@ -117,13 +125,18 @@ def _handle_gopro_prepare(args: argparse.Namespace) -> int:
 
 
 def _handle_collect(args: argparse.Namespace) -> int:
+    cfg = _load_script_config(getattr(args, "config", None))
+    source = args.source or cfg.get("source")
+    if not source:
+        raise SystemExit("error: --source is required (or set 'source:' in config YAML)")
+    out_dir = args.out_dir or cfg.get("out_dir")
     settings, base_dir = _load_and_override_settings(args)
     result = collect_samples(
-        source=args.source,
+        source=source,
         mode=args.source_mode,
         settings=settings,
         base_dir=base_dir,
-        output_dir=args.out_dir,
+        output_dir=out_dir,
         limit_frames=args.limit_frames,
         calibrate_line=args.calibrate_line,
     )
@@ -262,6 +275,10 @@ def _add_detection_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--enable-reid", action="store_true", help="Enable ReID fallback")
     parser.add_argument("--disable-reid", action="store_true", help="Disable ReID fallback")
     parser.add_argument("--digits-only", action="store_true", help="Treat plate model classes as 0..9 without a plate class")
+    parser.add_argument("--disable-motion-gate", action="store_true", help="Run detection on every frame instead of only on frames with motion in the entry zone")
+    parser.add_argument("--enable-motion-gate", action="store_true", help="Enable the entry-zone motion gate (on by default)")
+    parser.add_argument("--motion-gate-zone", type=float, help="Entry zone width as a fraction of the frame (default: 0.25)")
+    parser.add_argument("--motion-gate-min-area", type=float, help="Fraction of entry-zone pixels that must change to wake detection (default: 0.004)")
 
 
 def build_parser() -> argparse.ArgumentParser:

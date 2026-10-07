@@ -14,6 +14,8 @@ from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Callable
 
+from .laps import Crossing, compute_laps
+
 Logger = Callable[[str], None]
 
 _RESULT_FIELDS = [
@@ -124,17 +126,16 @@ def recount(
     resolved.sort(key=lambda r: r["_ts"])
 
     # Assign lap and lap_time per rider; lap 1 is measured from race_start_sec
-    last_ts: dict[str, float] = {}
+    result = compute_laps(
+        [Crossing(key=index, timestamp=r["_ts"], participant_id=r["rider_id"]) for index, r in enumerate(resolved)],
+        race_start=race_start_sec,
+    )
     lap_count: dict[str, int] = {}
     rows: list[dict] = []
-    for r in resolved:
-        rider_id = r["rider_id"]
+    for index, r in enumerate(resolved):
+        lap, lap_time = result.assignments[index]
+        lap_count[r["rider_id"]] = lap
         ts = r["_ts"]
-        lap_count[rider_id] = lap_count.get(rider_id, 0) + 1
-        lap = lap_count[rider_id]
-        prev = last_ts.get(rider_id, race_start_sec)
-        lap_time = round(ts - prev, 3)
-        last_ts[rider_id] = ts
 
         row = _flatten(r)
         row.pop("_ts", None)

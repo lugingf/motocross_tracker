@@ -1,0 +1,7 @@
+{
+  "schema_version": 1,
+  "callback": {
+    "base_url": "https://lapvision.org/api",
+    "token": "run-token"
+  }
+}

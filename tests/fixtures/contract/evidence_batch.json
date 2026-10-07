@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "run_id": "8f4a1d52-2f0b-4a53-8a7c-0b3f0f3a0002",
+  "items": [
+    {
+      "event_id": "8f4a1d52-1",
+      "kind": "plate",
+      "content_type": "image/jpeg",
+      "data": "/9j/2Q=="
+    }
+  ]
+}

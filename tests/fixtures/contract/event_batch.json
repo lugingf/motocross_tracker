@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "run_id": "8f4a1d52-2f0b-4a53-8a7c-0b3f0f3a0002",
+  "events": [
+    {
+      "event_id": "8f4a1d52-1",
+      "seq": 1,
+      "kind": "crossing",
+      "media_time_ms": 22873,
+      "segment_id": 0,
+      "participant_id": "plate_75",
+      "plate_text": "75",
+      "plate_confidence": 0.911,
+      "identity_source": "plate",
+      "bbox": {
+        "x": 1007,
+        "y": 576,
+        "w": 813,
+        "h": 504
+      },
+      "evidence_ref": "crops/frame1372_tid156.jpg"
+    }
+  ]
+}

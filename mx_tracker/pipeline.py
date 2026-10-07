@@ -24,6 +24,7 @@ import cv2
 from .artifacts import (
     CropArchive,
     EventLog,
+    EventSink,
     RunArtifacts,
     _flatten_collect_row,
     _flatten_event,
@@ -53,7 +54,7 @@ from .plate_reading import (
     detect_plate_number,
 )
 from .tracking import DetectionRecord, PlateObservation, TrackState
-from .video_source import FramePacket, VideoSource
+from .video_source import FramePacket, VideoSource, redact_source
 
 Logger = Callable[[str], None]
 
@@ -186,6 +187,7 @@ class SourceProcessor:
         limit_frames: int | None = None,
         calibrate_line: bool = False,
         logger: Logger | None = None,
+        event_sink: EventSink | None = None,
     ) -> None:
         self.source = source
         self.mode = mode
@@ -197,6 +199,7 @@ class SourceProcessor:
         self.limit_frames = limit_frames
         self.calibrate_line = calibrate_line
         self.log = logger or _default_logger
+        self.event_sink = event_sink
 
         # Per-run state, populated in run().
         self.track_states: dict[int, TrackState] = {}
@@ -223,7 +226,7 @@ class SourceProcessor:
 
         wall_started_at = datetime.now(timezone.utc)
         self._write_run_info(artifacts, wall_started_at)
-        event_log = EventLog(artifacts, wall_started_at, self.collect_only)
+        event_log = EventLog(artifacts, wall_started_at, self.collect_only, sink=self.event_sink)
         crop_archive = CropArchive(artifacts.debug_dir)
         models = DetectionModels.load(self.settings, self.base_dir, self.collect_only, self.log)
         overlay = OverlayWriter(
@@ -250,6 +253,10 @@ class SourceProcessor:
                 break
             if self.limit_frames is not None and packet.frame_index > self.limit_frames:
                 break
+            if packet.gap_before > 0:
+                self._note_gap(packet)
+            if self.event_sink is not None:
+                self.event_sink.progress(packet.frame_index, packet.timestamp)
             self._evict_stale_tracks(packet.timestamp)
             self._process_frame(packet, line_a, line_b, models, event_log, crop_archive, overlay, profiler, artifacts)
             profiler.add("frame_total", time.perf_counter() - frame_started_at)
@@ -262,6 +269,12 @@ class SourceProcessor:
         overlay.close()
         event_log.close()
         return self._finalize(artifacts, line_value, source_stats)
+
+    def _note_gap(self, packet: FramePacket) -> None:
+        start = packet.timestamp - packet.gap_before
+        self.log(f"segment={packet.segment_id} starts at {packet.timestamp:.2f}s after {packet.gap_before:.2f}s unseen")
+        if self.event_sink is not None:
+            self.event_sink.gap(packet.segment_id, start, packet.timestamp)
 
     # -- setup helpers -----------------------------------------------------
 
@@ -292,7 +305,7 @@ class SourceProcessor:
     def _write_run_info(self, artifacts: RunArtifacts, wall_started_at: datetime) -> None:
         (artifacts.run_dir / "run_info.json").write_text(
             json.dumps(
-                {"started_at": wall_started_at.isoformat(timespec="seconds"), "source": self.source},
+                {"started_at": wall_started_at.isoformat(timespec="seconds"), "source": redact_source(self.source)},
                 ensure_ascii=False,
             ),
             encoding="utf-8",
@@ -641,7 +654,7 @@ class SourceProcessor:
     def _finalize(self, artifacts: RunArtifacts, line_value: str, source_stats: dict[str, object]) -> dict[str, object]:
         summary = {
             "mode": self.mode,
-            "source": self.source,
+            "source": redact_source(self.source),
             "line": line_value,
             "run_dir": str(artifacts.run_dir),
             "video_path": str(artifacts.video_path) if artifacts.video_path is not None else None,
@@ -673,6 +686,7 @@ def process_source(
     limit_frames: int | None = None,
     calibrate_line: bool = False,
     logger: Logger | None = None,
+    event_sink: EventSink | None = None,
 ) -> dict[str, object]:
     return SourceProcessor(
         source=source,
@@ -685,6 +699,7 @@ def process_source(
         limit_frames=limit_frames,
         calibrate_line=calibrate_line,
         logger=logger,
+        event_sink=event_sink,
     ).run()
 
 
@@ -718,6 +733,7 @@ def run_stream_detection(
     limit_frames: int | None = None,
     calibrate_line: bool = False,
     logger: Logger | None = None,
+    event_sink: EventSink | None = None,
 ) -> dict[str, object]:
     return process_source(
         source=source,
@@ -729,6 +745,7 @@ def run_stream_detection(
         limit_frames=limit_frames,
         calibrate_line=calibrate_line,
         logger=logger,
+        event_sink=event_sink,
     )
 
 

@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "run_id": "8f4a1d52-2f0b-4a53-8a7c-0b3f0f3a0002",
+  "submission_id": "8f4a1d52-final-1",
+  "status": "final",
+  "algorithm_version": "laps-1",
+  "config_version": 3,
+  "race_start_media_ms": 12500,
+  "manifest": {
+    "last_seq": 41,
+    "event_count": 41,
+    "gaps": [
+      {
+        "from_ms": 60000,
+        "to_ms": 64000,
+        "reason": "reconnect"
+      }
+    ]
+  },
+  "laps": [
+    {
+      "participant_id": "plate_75",
+      "number": 75,
+      "driver_name": "Jane Doe",
+      "lap_number": 1,
+      "lap_time_ms": 10373,
+      "finish_media_ms": 22873,
+      "position": 1,
+      "confidence": 0.91,
+      "quality": [
+        "gap_before"
+      ],
+      "event_ids": [
+        "8f4a1d52-1"
+      ]
+    }
+  ],
+  "applied_correction_id": 0
+}

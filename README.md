@@ -960,3 +960,14 @@ make get-models
 make verify-models
 make save-models MODELS="yolov8n_plates_ft1.pt" MODELS_TAG=models-v2
 ```
+
+
+## lap_vision integration
+
+`mx_tracker/integration/` is the API lap_vision drives: `serve` starts a second listener, with the
+bearer token from `MX_INTEGRATION_TOKEN`, when `integration.enabled` is true. It serves
+`/integration/v1` only. A job is a session's detection on a stream; its crossings are stored in
+SQLite before they are sent, and acknowledged by sequence number. Laps are calculated by
+`mx_tracker/laps.py`, the same code that `recount` uses. Network streams are read with PyAV and
+stamped from the media's own clock (`stream.ingest: pyav`); a reconnect starts a new segment and is
+reported as a gap. See lap_vision's `deploy/mediamtx/README.md` for the deployment.

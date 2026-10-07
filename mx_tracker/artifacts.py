@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Protocol
 
 import cv2
 import numpy as np
@@ -173,6 +174,22 @@ def prepare_artifacts(
     )
 
 
+class EventSink(Protocol):
+    """Receives what a run sees while it is running, in addition to the files.
+
+    `crossing` gets the same event dict that is written to the JSONL. `gap`
+    says that the timeline between `start` and `end` was not seen, and that
+    the frames after it belong to segment `segment_id`. `progress` is called
+    for every frame taken from the source, processed or not.
+    """
+
+    def crossing(self, event: dict[str, object]) -> None: ...
+
+    def gap(self, segment_id: int, start: float, end: float) -> None: ...
+
+    def progress(self, frame_index: int, timestamp: float) -> None: ...
+
+
 class EventLog:
     """Single sink for run events, writing to both JSONL and CSV.
 
@@ -180,11 +197,18 @@ class EventLog:
     and centralizes the event schema that used to be repeated per code path.
     """
 
-    def __init__(self, artifacts: RunArtifacts, wall_started_at: datetime, collect_only: bool) -> None:
+    def __init__(
+        self,
+        artifacts: RunArtifacts,
+        wall_started_at: datetime,
+        collect_only: bool,
+        sink: EventSink | None = None,
+    ) -> None:
         fields = COLLECT_CSV_FIELDS if collect_only else EVENT_CSV_FIELDS
         self._jsonl = JsonlWriter(artifacts.jsonl_path)
         self._csv = CsvWriter(artifacts.csv_path, fields)
         self._wall_started_at = wall_started_at
+        self._sink = sink
 
     def emit_crossing(
         self,
@@ -217,6 +241,8 @@ class EventLog:
         }
         self._jsonl.write(event)
         self._csv.write(_flatten_event(dict(event)))
+        if self._sink is not None:
+            self._sink.crossing(dict(event))
 
     def emit_collect(
         self,

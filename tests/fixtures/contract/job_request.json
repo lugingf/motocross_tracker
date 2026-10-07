@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "session_id": "5d0f6c9e-6a3c-4c35-9a3e-0b3f0f3a0001",
+  "run_id": "8f4a1d52-2f0b-4a53-8a7c-0b3f0f3a0002",
+  "idempotency_key": "8f4a1d52-2f0b-4a53-8a7c-0b3f0f3a0002",
+  "source": {
+    "url": "rtsp://127.0.0.1:18554/imports/5d0f6c9e",
+    "transport": "tcp",
+    "username": "r-5d0f6c9e",
+    "password": "read-secret"
+  },
+  "callback": {
+    "base_url": "https://lapvision.org/api",
+    "token": "run-token"
+  },
+  "configuration": {
+    "version": 3,
+    "calibration": {
+      "roi": {
+        "x": 0.1,
+        "y": 0.2,
+        "w": 0.8,
+        "h": 0.7
+      },
+      "line_a": {
+        "x": 0.5,
+        "y": 0.05
+      },
+      "line_b": {
+        "x": 0.5,
+        "y": 0.95
+      },
+      "direction": "left_to_right",
+      "min_lap_time_ms": 20000,
+      "rotation": 0,
+      "frame_width": 1920,
+      "frame_height": 1080
+    },
+    "roster": [
+      {
+        "number": 75,
+        "name": "Jane Doe",
+        "team": "Team"
+      }
+    ]
+  },
+  "race_start_media_ms": 12500,
+  "resume_after_seq": 41
+}

@@ -66,6 +66,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "max_reconnects": -1,
         "loop_file": False,
         "status_interval_sec": 10.0,
+        "ingest": "pyav",
+        "open_timeout_sec": 10.0,
+        "read_timeout_sec": 5.0,
+        "rtsp_transport": "tcp",
+        "rotation": 0,
     },
     "output": {
         "write_video": True,
@@ -80,6 +85,22 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "service": {
         "host": "127.0.0.1",
         "port": 8080,
+    },
+    "integration": {
+        "enabled": False,
+        "host": "127.0.0.1",
+        "port": 8081,
+        "token": "",
+        "state_dir": "data/integration",
+        "allowed_sources": [],
+        "allowed_callbacks": [],
+        "max_jobs": 1,
+        "batch_size": 200,
+        "heartbeat_interval_sec": 10.0,
+        "revision_interval_sec": 30.0,
+        "low_confidence": 0.5,
+        "max_outbox_events": 100000,
+        "request_timeout_sec": 15.0,
     },
 }
 
@@ -195,6 +216,31 @@ class StreamSettings(BaseModel):
     max_reconnects: int = -1
     loop_file: bool = False
     status_interval_sec: float = 10.0
+    # How network streams are read. "pyav" takes the timeline from the media's own
+    # timestamps; "cv2" stamps frames with the wall clock at the moment they were
+    # decoded, which drifts whenever processing falls behind the stream.
+    ingest: str = "pyav"
+    open_timeout_sec: float = Field(default=10.0, gt=0.0)
+    read_timeout_sec: float = Field(default=5.0, gt=0.0)
+    rtsp_transport: str = "tcp"
+    # Degrees clockwise the frame is turned to stand upright, as a phone held
+    # sideways delivers it. Everything after the source sees the turned frame.
+    rotation: int = 0
+
+    @field_validator("rotation")
+    @classmethod
+    def validate_rotation(cls, value: int) -> int:
+        if value not in (0, 90, 180, 270):
+            raise ValueError("stream.rotation must be 0, 90, 180 or 270")
+        return value
+
+    @field_validator("ingest")
+    @classmethod
+    def validate_ingest(cls, value: str) -> str:
+        allowed = {"pyav", "cv2"}
+        if value not in allowed:
+            raise ValueError(f"stream.ingest must be one of {sorted(allowed)}")
+        return value
 
 
 class OutputSettings(BaseModel):
@@ -213,6 +259,33 @@ class ServiceSettings(BaseModel):
     port: int = 8080
 
 
+class IntegrationSettings(BaseModel):
+    """The API lap_vision drives the tracker through, served on a listener of its own.
+
+    The listener is separate from `service` on purpose: it is the one that gets
+    forwarded to another machine, and it must not carry the job service's
+    routes, which take arbitrary paths and have no authentication.
+    """
+
+    enabled: bool = False
+    host: str = "127.0.0.1"
+    port: int = 8081
+    # Better supplied as MX_INTEGRATION_TOKEN than written in a file.
+    token: str = ""
+    state_dir: str = "data/integration"
+    # URL prefixes the API may read streams from and post results to. Empty
+    # means none: a request naming anything else is refused.
+    allowed_sources: list[str] = Field(default_factory=list)
+    allowed_callbacks: list[str] = Field(default_factory=list)
+    max_jobs: int = Field(default=1, ge=1)
+    batch_size: int = Field(default=200, ge=1, le=500)
+    heartbeat_interval_sec: float = Field(default=10.0, gt=0.0)
+    revision_interval_sec: float = Field(default=30.0, gt=0.0)
+    low_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    max_outbox_events: int = Field(default=100000, ge=1)
+    request_timeout_sec: float = Field(default=15.0, gt=0.0)
+
+
 class TrackerSettings(BaseModel):
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     line: LineSettings = Field(default_factory=LineSettings)
@@ -223,6 +296,7 @@ class TrackerSettings(BaseModel):
     stream: StreamSettings = Field(default_factory=StreamSettings)
     output: OutputSettings = Field(default_factory=OutputSettings)
     service: ServiceSettings = Field(default_factory=ServiceSettings)
+    integration: IntegrationSettings = Field(default_factory=IntegrationSettings)
 
 
 def load_settings(config_path: str | Path | None = None) -> tuple[TrackerSettings, Path]:

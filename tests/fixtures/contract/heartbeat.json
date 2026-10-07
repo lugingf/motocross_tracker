@@ -1,0 +1,11 @@
+{
+  "schema_version": 1,
+  "run_id": "8f4a1d52-2f0b-4a53-8a7c-0b3f0f3a0002",
+  "state": "running",
+  "media_position_ms": 61000,
+  "frames_processed": 3660,
+  "inference_fps": 28.5,
+  "backlog_ms": 120,
+  "last_seq": 41,
+  "outbox_pending": 2
+}

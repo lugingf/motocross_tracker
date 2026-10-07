@@ -232,6 +232,7 @@ def run_service(
     default_config_path: str | Path | None = None,
 ) -> None:
     manager = JobManager(default_config_path=default_config_path)
+    integration = _start_integration(default_config_path)
 
     class Handler(JsonHandler):
         pass
@@ -245,3 +246,28 @@ def run_service(
         print("service stopped")
     finally:
         server.server_close()
+        if integration is not None:
+            integration.shutdown()
+
+
+def _start_integration(default_config_path: str | Path | None):
+    """Serve the lap_vision integration on its own listener, when it is switched on."""
+    from .config import load_settings
+    from .integration.api import make_server
+    from .integration.jobs import JobManager as IntegrationJobs
+
+    settings, base_dir = load_settings(default_config_path)
+    if not settings.integration.enabled:
+        return None
+    jobs = IntegrationJobs(settings, base_dir)
+    server = make_server(settings, jobs)
+    threading.Thread(target=server.serve_forever, name="integration-api", daemon=True).start()
+    print(f"integration listening on http://{settings.integration.host}:{settings.integration.port}")
+
+    class Running:
+        def shutdown(self) -> None:
+            server.shutdown()
+            server.server_close()
+            jobs.close()
+
+    return Running()
